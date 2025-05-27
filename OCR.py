@@ -28,7 +28,7 @@ uploaded_file = st.file_uploader("Choisissez une image...", type=["jpg", "jpeg",
 
 if uploaded_file is not None:
     # Afficher l'image téléchargée
-    st.image(uploaded_file, caption='Image téléchargée', use_column_width=True)
+    st.image(uploaded_file, caption='Image téléchargée', use_container_width=True)
     base64_image = encode_image(uploaded_file)
 
     # Bouton pour envoyer l'image à Mistral OCR
@@ -51,7 +51,7 @@ if uploaded_file is not None:
                 # Afficher le texte extrait
                 st.subheader("Texte extrait")
 
-                st.write(ocr_response.pages[0].markdown)
+                st.markdown(ocr_response.pages[0].markdown)
                 print(ocr_response)
 
             except Exception as e:
