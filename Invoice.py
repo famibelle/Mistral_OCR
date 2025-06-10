@@ -25,53 +25,59 @@ def check_and_update_database(data, image_path):
     conn = sqlite3.connect('factures.db')
     cursor = conn.cursor()
 
-    # Create the Factures table if it doesn't exist
+    # Création de la table si elle n'existe pas
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS Factures (
             facture_id INTEGER PRIMARY KEY AUTOINCREMENT,
-            etablissement TEXT,
-            site_web TEXT,
-            type_client TEXT,
-            bar_code TEXT,
-            bar_numero TEXT,
-            duplicata TEXT,
-            date TEXT,
-            heure TEXT,
-            ticket_reference TEXT,
-            ticket_description TEXT,
-            ticket_quantite INTEGER,
-            ticket_prix REAL,
-            total_montant_ht REAL,
-            total_montant_ttc REAL,
-            tva_taux TEXT,
-            tva_montant REAL,
-            siret TEXT,
-            ape TEXT,
-            tva_etablissement TEXT,
-            adresse TEXT,
-            logiciel TEXT,
-            fiche TEXT,
-            image_path TEXT
+            numero_facture TEXT UNIQUE,                -- Numéro de facture
+            date_emission TEXT,                        -- Date d'émission
+            vendeur_nom TEXT,                          -- Nom ou raison sociale du vendeur
+            vendeur_adresse TEXT,                      -- Adresse complète du vendeur
+            vendeur_siret TEXT,                        -- Numéro SIRET ou SIREN du vendeur
+            vendeur_tva TEXT,                          -- Numéro de TVA intracommunautaire du vendeur
+            client_nom TEXT,                           -- Nom ou raison sociale du client
+            client_adresse TEXT,                       -- Adresse complète du client
+            description TEXT,                          -- Description des biens ou services
+            date_vente TEXT,                           -- Date de la vente ou prestation (si différente)
+            prix_unitaire_ht REAL,                     -- Prix unitaire HT
+            quantite INTEGER,                          -- Quantité
+            taux_tva TEXT,                             -- Taux de TVA applicable
+            montant_ht REAL,                           -- Montant total HT
+            montant_tva REAL,                          -- Montant TVA
+            montant_ttc REAL,                          -- Montant total TTC
+            conditions_paiement TEXT,                  -- Conditions de paiement
+            mentions_legales TEXT,                     -- Mentions légales spécifiques
+            image_path TEXT                            -- Chemin de l'image de la facture
         )
     ''')
 
-    # Insert data into the Factures table
+    # Insertion des données extraites
     cursor.execute('''
-        INSERT INTO Factures (
-            etablissement, site_web, type_client, bar_code, bar_numero, duplicata, date, heure,
-            ticket_reference, ticket_description, ticket_quantite, ticket_prix, total_montant_ht,
-            total_montant_ttc, tva_taux, tva_montant, siret, ape, tva_etablissement, adresse,
-            logiciel, fiche, image_path
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT OR IGNORE INTO Factures (
+            numero_facture, date_emission, vendeur_nom, vendeur_adresse, vendeur_siret, vendeur_tva,
+            client_nom, client_adresse, description, date_vente, prix_unitaire_ht, quantite,
+            taux_tva, montant_ht, montant_tva, montant_ttc, conditions_paiement, mentions_legales, image_path
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ''', (
-        data.get('etablissement'), data.get('site_web'), data.get('type'), data.get('bar', {}).get('code'),
-        data.get('bar', {}).get('numero'), data.get('duplicata'), data.get('date'), data.get('heure'),
-        data.get('ticket', {}).get('reference'), data.get('ticket', {}).get('description'),
-        data.get('ticket', {}).get('quantite'), data.get('ticket', {}).get('prix'),
-        data.get('total', {}).get('montant_ht'), data.get('total', {}).get('montant_ttc'),
-        data.get('total', {}).get('tva', {}).get('taux'), data.get('total', {}).get('tva', {}).get('montant'),
-        data.get('siret'), data.get('ape'), data.get('tva_etablissement'), data.get('adresse'),
-        data.get('logiciel'), data.get('fiche'), image_path
+        data.get('numero_facture'),
+        data.get('date_emission'),
+        data.get('vendeur_nom'),
+        data.get('vendeur_adresse'),
+        data.get('vendeur_siret'),
+        data.get('vendeur_tva'),
+        data.get('client_nom'),
+        data.get('client_adresse'),
+        data.get('description'),
+        data.get('date_vente'),
+        data.get('prix_unitaire_ht'),
+        data.get('quantite'),
+        data.get('taux_tva'),
+        data.get('montant_ht'),
+        data.get('montant_tva'),
+        data.get('montant_ttc'),
+        data.get('conditions_paiement'),
+        data.get('mentions_legales'),
+        image_path
     ))
 
     conn.commit()
@@ -115,8 +121,8 @@ def main():
             image_ocr_markdown = ocr_response.pages[0].markdown
 
             # Display OCR results
-            st.subheader("Informations extraites")
-            st.write(image_ocr_markdown)
+            #st.subheader("Informations extraites")
+            #st.write(image_ocr_markdown)
 
 
             chat_response = client.chat.complete(
@@ -126,7 +132,36 @@ def main():
                         "role": "user",
                         "content": [
                             ImageURLChunk(image_url=f"data:image/jpeg;base64,{base64_image}"),
-                            TextChunk(text=f"Voici le résultat de l'OCR :\n\n{image_ocr_markdown}\n\nPeux-tu extraire les informations de la facture ? L'output doit être au format JSON."),
+                            TextChunk(text=f"""
+Voici le résultat de l'OCR :
+
+{image_ocr_markdown}
+
+Peux-tu extraire les informations de la facture? L'output doit être au format JSON **à plat** (pas de listes ni d'objets imbriqués).
+
+Les champs à extraire sont les suivants:
+- numero_facture
+- date_emission
+- vendeur_nom
+- vendeur_adresse
+- vendeur_siret
+- vendeur_tva
+- client_nom
+- client_adresse
+- description : concatène toutes les lignes d'articles en une seule chaîne de texte lisible (exemple : "Produit A x2 - 10€ HT, Produit B x1 - 5€ HT")
+- date_vente
+- prix_unitaire_ht
+- quantite
+- taux_tva
+- montant_ht
+- montant_tva
+- montant_ttc
+- conditions_paiement
+- mentions_legales
+
+**Le JSON doit être à plat, chaque champ doit être une clé de premier niveau.**
+Assure-toi que le JSON est valide et que les champs sont bien formatés.
+"""),
                         ],
                     },
                 ],
@@ -135,6 +170,7 @@ def main():
             )
             response_dict = json.loads(chat_response.choices[0].message.content)
             json_string = json.dumps(response_dict, indent=4)
+            st.subheader("Informations extraites")
             st.json(json_string)
 
             # Update the database with OCR results
@@ -142,6 +178,33 @@ def main():
             st.success("✅ Transmis")
         else:
             st.error("Veuillez entrer une clé API Mistral valide.")
+
+    # Option pour afficher les factures
+    st.subheader("Afficher les factures enregistrées")
+    conn = sqlite3.connect('factures.db')
+    df = None
+    try:
+        df = None
+        import pandas as pd
+        df = pd.read_sql_query("SELECT * FROM Factures", conn)
+    except Exception as e:
+        st.error(f"Erreur lors de la lecture de la base : {e}")
+    finally:
+        conn.close()
+    if df is not None and not df.empty:
+        st.subheader("Factures enregistrées")
+        # Surligner la dernière facture ajoutée si possible
+        if 'numero_facture' in df.columns and 'response_dict' in locals():
+            last_num = response_dict.get('numero_facture')
+            def highlight_last(row):
+                style = 'font-weight: bold' if row['numero_facture'] == last_num else ''
+                return [style]*len(row)
+            st.dataframe(df.style.apply(highlight_last, axis=1))
+        else:
+            st.dataframe(df)
+
+    else:
+        st.info("Aucune facture enregistrée.")
 
 if __name__ == "__main__":
     main()
