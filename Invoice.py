@@ -3,7 +3,10 @@ import os
 import sqlite3
 import streamlit as st
 from PIL import Image
-from mistralai import Mistral
+from mistralai import Mistral, DocumentURLChunk, ImageURLChunk, TextChunk
+
+import json
+
 
 def encode_image(image_path):
     """Encode the image to base64."""
@@ -92,33 +95,51 @@ def main():
 
         # Display the image
         image = Image.open(uploaded_file)
-        st.image(image, caption='Image téléchargée', use_column_width=True)
+        st.image(image, caption='Image téléchargée', use_container_width=True)
 
         # Encode the image to base64
         base64_image = encode_image(image_path)
 
         if api_key:
-            try:
-                # Use Mistral API for OCR
-                client = Mistral(api_key=api_key)
-                ocr_response = client.ocr.process(
-                    model="mistral-ocr-latest",
-                    document={
-                        "type": "image_url",
-                        "image_url": f"data:image/jpeg;base64,{base64_image}"
+            # Use Mistral API for OCR
+            client = Mistral(api_key=api_key)
+            ocr_response = client.ocr.process(
+                model="mistral-ocr-latest",
+                document={
+                    "type": "image_url",
+                    "image_url": f"data:image/jpeg;base64,{base64_image}"
+                },
+                include_image_base64=True,
+                #document_annotation_format = { "type": "json_object" }
+            )
+            image_ocr_markdown = ocr_response.pages[0].markdown
+
+            # Display OCR results
+            st.subheader("Informations extraites")
+            st.write(image_ocr_markdown)
+
+
+            chat_response = client.chat.complete(
+                model="pixtral-12b-latest",
+                messages=[
+                    {
+                        "role": "user",
+                        "content": [
+                            ImageURLChunk(image_url=f"data:image/jpeg;base64,{base64_image}"),
+                            TextChunk(text=f"Voici le résultat de l'OCR :\n\n{image_ocr_markdown}\n\nPeux-tu extraire les informations de la facture ? L'output doit être au format JSON."),
+                        ],
                     },
-                    include_image_base64=True
-                )
+                ],
+                response_format= {"type": "json_object"},
+                temperature=0
+            )
+            response_dict = json.loads(chat_response.choices[0].message.content)
+            json_string = json.dumps(response_dict, indent=4)
+            st.json(json_string)
 
-                # Display OCR results
-                st.subheader("Informations extraites")
-                st.write(ocr_response)
-
-                # Update the database with OCR results
-                check_and_update_database(ocr_response, image_path)
-                st.success("✅ Transmis")
-            except Exception as e:
-                st.error(f"Une erreur est survenue lors de l'appel à l'API Mistral: {e}")
+            # Update the database with OCR results
+            check_and_update_database(response_dict, image_path)
+            st.success("✅ Transmis")
         else:
             st.error("Veuillez entrer une clé API Mistral valide.")
 
