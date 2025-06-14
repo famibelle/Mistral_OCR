@@ -85,8 +85,11 @@ def save_image(image_data: bytes, filename: str) -> str:
         logger.error(f"Erreur lors de la sauvegarde de l'image: {e}")
         raise
 
-def check_and_update_database(data: dict) -> None:
-    """Vérifie si les données existent dans la base de données et les met à jour ou les insère."""
+def check_and_update_database(data: dict) -> list:
+    """
+    Vérifie si la facture existe dans la base, insère ou met à jour, et retourne la liste des champs ajoutés ou mis à jour.
+    """
+    updated_fields = []
     try:
         conn = sqlite3.connect('factures.db')
         cursor = conn.cursor()
@@ -118,43 +121,114 @@ def check_and_update_database(data: dict) -> None:
             )
         ''')
 
-        # Insertion des données extraites
-        cursor.execute('''
-            INSERT OR IGNORE INTO Factures (
-                numero_facture, date_emission, vendeur_nom, vendeur_adresse, vendeur_siret, vendeur_tva,
-                client_nom, client_adresse, description, date_vente, prix_unitaire_ht, quantite,
-                taux_tva, montant_ht, montant_tva, montant_ttc, conditions_paiement, mentions_legales,
-                image_path, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (
-            data.get('numero_facture'),
-            data.get('date_emission'),
-            data.get('vendeur_nom'),
-            data.get('vendeur_adresse'),
-            data.get('vendeur_siret'),
-            data.get('vendeur_tva'),
-            data.get('client_nom'),
-            data.get('client_adresse'),
-            data.get('description'),
-            data.get('date_vente'),
-            data.get('prix_unitaire_ht'),
-            data.get('quantite'),
-            data.get('taux_tva'),
-            data.get('montant_ht'),
-            data.get('montant_tva'),
-            data.get('montant_ttc'),
-            data.get('conditions_paiement'),
-            data.get('mentions_legales'),
-            data.get('image_path'),
-            data.get('created_at', datetime.now().isoformat())
-        ))
+        # Vérifier si la facture existe déjà
+        cursor.execute(
+            "SELECT * FROM Factures WHERE numero_facture = ?",
+            (data.get('numero_facture'),)
+        )
+        existing = cursor.fetchone()
+        columns = [desc[0] for desc in cursor.description]
 
+        if not existing:
+            # Nouvelle facture : insertion
+            cursor.execute('''
+                INSERT INTO Factures (
+                    numero_facture, date_emission, vendeur_nom, vendeur_adresse, vendeur_siret, vendeur_tva,
+                    client_nom, client_adresse, description, date_vente, prix_unitaire_ht, quantite,
+                    taux_tva, montant_ht, montant_tva, montant_ttc, conditions_paiement, mentions_legales,
+                    image_path, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                data.get('numero_facture'),
+                data.get('date_emission'),
+                data.get('vendeur_nom'),
+                data.get('vendeur_adresse'),
+                data.get('vendeur_siret'),
+                data.get('vendeur_tva'),
+                data.get('client_nom'),
+                data.get('client_adresse'),
+                data.get('description'),
+                data.get('date_vente'),
+                data.get('prix_unitaire_ht'),
+                data.get('quantite'),
+                data.get('taux_tva'),
+                data.get('montant_ht'),
+                data.get('montant_tva'),
+                data.get('montant_ttc'),
+                data.get('conditions_paiement'),
+                data.get('mentions_legales'),
+                data.get('image_path'),
+                data.get('created_at', datetime.now().isoformat())
+            ))
+            logger.info("nouvelles factures enregistrées")
+        else:
+            # Facture existante : mise à jour et log des champs modifiés
+            for idx, col in enumerate(columns):
+                if col == "facture_id" or col == "numero_facture":
+                    continue
+                new_value = data.get(col)
+                old_value = existing[idx]
+                # Champ ajouté ou modifié
+                if (old_value is None or old_value == "") and new_value not in (None, ""):
+                    updated_fields.append(col)
+                elif new_value not in (None, "") and str(new_value) != str(old_value):
+                    updated_fields.append(col)
+            # Mise à jour de la facture
+            cursor.execute('''
+                UPDATE Factures SET
+                    date_emission=?,
+                    vendeur_nom=?,
+                    vendeur_adresse=?,
+                    vendeur_siret=?,
+                    vendeur_tva=?,
+                    client_nom=?,
+                    client_adresse=?,
+                    description=?,
+                    date_vente=?,
+                    prix_unitaire_ht=?,
+                    quantite=?,
+                    taux_tva=?,
+                    montant_ht=?,
+                    montant_tva=?,
+                    montant_ttc=?,
+                    conditions_paiement=?,
+                    mentions_legales=?,
+                    image_path=?,
+                    created_at=?
+                WHERE numero_facture=?
+            ''', (
+                data.get('date_emission'),
+                data.get('vendeur_nom'),
+                data.get('vendeur_adresse'),
+                data.get('vendeur_siret'),
+                data.get('vendeur_tva'),
+                data.get('client_nom'),
+                data.get('client_adresse'),
+                data.get('description'),
+                data.get('date_vente'),
+                data.get('prix_unitaire_ht'),
+                data.get('quantite'),
+                data.get('taux_tva'),
+                data.get('montant_ht'),
+                data.get('montant_tva'),
+                data.get('montant_ttc'),
+                data.get('conditions_paiement'),
+                data.get('mentions_legales'),
+                data.get('image_path'),
+                data.get('created_at', datetime.now().isoformat()),
+                data.get('numero_facture')
+            ))
+            if updated_fields:
+                logger.info(f"facture existante, champs ajoutés ou mis à jour : {', '.join(updated_fields)}")
+            else:
+                logger.info("facture existante, aucune donnée rajoutée ou modifiée")
         conn.commit()
     except Exception as e:
         logger.error(f"Erreur lors de la mise à jour de la base de données: {e}")
         raise
     finally:
         conn.close()
+    return updated_fields
 
 def process_image(image_path: str) -> dict:
     """Traite une image de facture et extrait les informations."""
@@ -229,11 +303,10 @@ Assure-toi que le JSON est valide et que les champs sont bien formatés.
 def send_whatsapp_message(to: str, body: str) -> str:
     """Envoie un message WhatsApp via Twilio."""
     try:
-        time.sleep(5)  # Ajoute un délai pour respecter la limite Twilio
         message = twilio_client.messages.create(
             body=body,
             from_=f'whatsapp:{TWILIO_PHONE_NUMBER}',
-            to=f'whatsapp:{USER_PHONE_NUMBER}'
+            to=to  # Ici, on utilise le numéro de l'expéditeur
         )
         return message.sid
     except Exception as e:
@@ -272,27 +345,45 @@ def process_incoming_message(data: dict, background_tasks: BackgroundTasks) -> N
 def process_and_respond(phone_number: str, image_path: str) -> None:
     """Traite l'image et envoie une réponse à l'utilisateur."""
     try:
-        # Traiter l'image
+        # 1. Réponse immédiate à la réception du ticket avec emoji d'attente
+        send_whatsapp_message(phone_number, "Merci pour votre envoi ! Je m'en occupe... ⏳")
+
+        # 2. Traitement du ticket
         facture_data = process_image(image_path)
         logger.info(f"Données extraites: {facture_data}")
-
-        # Mettre à jour la base de données
-        check_and_update_database(facture_data)
+        updated_fields = check_and_update_database(facture_data)
         logger.info("Base de données mise à jour")
 
-        # Envoyer une confirmation à l'utilisateur
-        # Générer un message détaillé avec tous les champs extraits
-        message = "✅ Transmis, votre facture a été traitée avec succès.\n"
-        for key, value in facture_data.items():
-            if key != "image_path":
-                message += f"{key.replace('_', ' ').capitalize()}: {value if value is not None else 'N/A'}\n"
-        send_whatsapp_message(phone_number, message)
-        logger.info(f"Message de confirmation envoyé à {phone_number}")
+        # 3. Retour utilisateur selon le cas
+        if updated_fields:
+            champs = ', '.join(updated_fields)
+            send_whatsapp_message(phone_number, f"✅ Facture existante, informations complémentaires ajoutées ou mises à jour : {champs}")
+            return
+        else:
+            send_whatsapp_message(phone_number, "🆕 Nouvelle facture enregistrée avec succès.")
+
+        # 4. Réconciliation de données (exemple)
+        result = reconciliation_donnees(facture_data)  # À implémenter selon ta logique
+
+        if result["type"] == "unique":
+            message = (
+                f"✅ Ticket bien associé à votre paiement de {result['montant']} € "
+                f"chez {result['magasin']} du {result['date']} à {result['heure']}."
+            )
+            send_whatsapp_message(phone_number, message)
+        elif result["type"] == "multiple":
+            message = "J’ai trouvé plusieurs transactions proches lors de la réconciliation :\n📌 Lequel correspond à votre ticket ?\n"
+            for t in result["transactions"]:
+                message += f"🔘 {t['montant']} € – {t['magasin']} – {t['heure']}\n"
+            message += "🔘 Aucun de ces choix"
+            send_whatsapp_message(phone_number, message)
+        else:
+            send_whatsapp_message(phone_number, "Aucune transaction correspondante trouvée lors de la réconciliation pour ce ticket.")
     except Exception as e:
         logger.error(f"Erreur lors du traitement et de la réponse: {e}")
         send_whatsapp_message(
             phone_number,
-            "Désolé, une erreur est survenue lors du traitement de votre facture."
+            "Désolé, une erreur est survenue lors du traitement de votre ticket."
         )
 
 @app.post("/webhook/")
@@ -315,6 +406,20 @@ async def webhook(request: Request, background_tasks: BackgroundTasks):
 async def health_check():
     """Endpoint pour vérifier l'état de l'application."""
     return {"status": "healthy"}
+
+def reconciliation_donnees(facture_data: dict) -> dict:
+    """
+    Exemple de fonction de réconciliation de données.
+    À remplacer par ta logique métier réelle.
+    """
+    # Exemple : toujours retourner un cas unique pour tester
+    return {
+        "type": "unique",
+        "montant": facture_data.get("montant_ttc", "??"),
+        "magasin": facture_data.get("vendeur_nom", "??"),
+        "date": facture_data.get("date_vente", "??"),
+        "heure": "??"
+    }
 
 if __name__ == "__main__":
     uvicorn.run(
