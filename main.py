@@ -88,6 +88,8 @@ def save_image(image_data: bytes, filename: str) -> str:
 def check_and_update_database(data: dict) -> list:
     """
     Vérifie si la facture existe dans la base, insère ou met à jour, et retourne la liste des champs ajoutés ou mis à jour.
+    Pour image_path, gère une liste de toutes les images associées à la facture.
+    La vérification se fait sur numero_facture ET vendeur_siret (ou vendeur_siren).
     """
     updated_fields = []
     try:
@@ -98,7 +100,7 @@ def check_and_update_database(data: dict) -> list:
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS Factures (
                 facture_id INTEGER PRIMARY KEY AUTOINCREMENT,
-                numero_facture TEXT UNIQUE,
+                numero_facture TEXT,
                 date_emission TEXT,
                 vendeur_nom TEXT,
                 vendeur_adresse TEXT,
@@ -116,21 +118,25 @@ def check_and_update_database(data: dict) -> list:
                 montant_ttc REAL,
                 conditions_paiement TEXT,
                 mentions_legales TEXT,
-                image_path TEXT,
-                created_at TEXT
+                image_path TEXT, -- stocke une liste JSON
+                created_at TEXT,
+                UNIQUE(numero_facture, vendeur_siret)
             )
         ''')
 
-        # Vérifier si la facture existe déjà
+        # Vérifier si la facture existe déjà (sur numero_facture ET vendeur_siret)
         cursor.execute(
-            "SELECT * FROM Factures WHERE numero_facture = ?",
-            (data.get('numero_facture'),)
+            "SELECT * FROM Factures WHERE numero_facture = ? AND vendeur_siret = ?",
+            (data.get('numero_facture'), data.get('vendeur_siret'))
         )
         existing = cursor.fetchone()
         columns = [desc[0] for desc in cursor.description]
 
+        # Préparer la liste d'images
+        new_image_path = data.get('image_path')
         if not existing:
-            # Nouvelle facture : insertion
+            # Nouvelle facture : insertion avec image_path sous forme de liste JSON
+            image_paths = [new_image_path] if new_image_path else []
             cursor.execute('''
                 INSERT INTO Factures (
                     numero_facture, date_emission, vendeur_nom, vendeur_adresse, vendeur_siret, vendeur_tva,
@@ -157,18 +163,30 @@ def check_and_update_database(data: dict) -> list:
                 data.get('montant_ttc'),
                 data.get('conditions_paiement'),
                 data.get('mentions_legales'),
-                data.get('image_path'),
+                json.dumps(image_paths),
                 data.get('created_at', datetime.now().isoformat())
             ))
             logger.info("nouvelles factures enregistrées")
         else:
-            # Facture existante : mise à jour et log des champs modifiés
+            # Facture existante : mise à jour et gestion de la liste d'images
+            idx_image_path = columns.index("image_path")
+            old_image_paths = existing[idx_image_path]
+            try:
+                old_image_paths_list = json.loads(old_image_paths) if old_image_paths else []
+            except Exception:
+                old_image_paths_list = []
+            # Ajoute la nouvelle image si elle n'est pas déjà dans la liste
+            if new_image_path and new_image_path not in old_image_paths_list:
+                old_image_paths_list.append(new_image_path)
+                updated_fields.append("image_path")
+            image_paths_json = json.dumps(old_image_paths_list)
+
+            # Vérifie les autres champs modifiés
             for idx, col in enumerate(columns):
-                if col == "facture_id" or col == "numero_facture":
+                if col in ("facture_id", "numero_facture", "vendeur_siret", "image_path"):
                     continue
                 new_value = data.get(col)
                 old_value = existing[idx]
-                # Champ ajouté ou modifié
                 if (old_value is None or old_value == "") and new_value not in (None, ""):
                     updated_fields.append(col)
                 elif new_value not in (None, "") and str(new_value) != str(old_value):
@@ -179,7 +197,6 @@ def check_and_update_database(data: dict) -> list:
                     date_emission=?,
                     vendeur_nom=?,
                     vendeur_adresse=?,
-                    vendeur_siret=?,
                     vendeur_tva=?,
                     client_nom=?,
                     client_adresse=?,
@@ -195,12 +212,11 @@ def check_and_update_database(data: dict) -> list:
                     mentions_legales=?,
                     image_path=?,
                     created_at=?
-                WHERE numero_facture=?
+                WHERE numero_facture=? AND vendeur_siret=?
             ''', (
                 data.get('date_emission'),
                 data.get('vendeur_nom'),
                 data.get('vendeur_adresse'),
-                data.get('vendeur_siret'),
                 data.get('vendeur_tva'),
                 data.get('client_nom'),
                 data.get('client_adresse'),
@@ -214,9 +230,10 @@ def check_and_update_database(data: dict) -> list:
                 data.get('montant_ttc'),
                 data.get('conditions_paiement'),
                 data.get('mentions_legales'),
-                data.get('image_path'),
+                image_paths_json,
                 data.get('created_at', datetime.now().isoformat()),
-                data.get('numero_facture')
+                data.get('numero_facture'),
+                data.get('vendeur_siret')
             ))
             if updated_fields:
                 logger.info(f"facture existante, champs ajoutés ou mis à jour : {', '.join(updated_fields)}")
@@ -230,6 +247,7 @@ def check_and_update_database(data: dict) -> list:
         conn.close()
     return updated_fields
 
+# --- Dans process_image, pour que image_path soit toujours une liste JSON dans la base ---
 def process_image(image_path: str) -> dict:
     """Traite une image de facture et extrait les informations."""
     try:
@@ -294,6 +312,7 @@ Assure-toi que le JSON est valide et que les champs sont bien formatés.
         )
 
         response_dict = json.loads(chat_response.choices[0].message.content)
+        # Toujours retourner le chemin de la nouvelle image (pour ajout dans la liste)
         response_dict['image_path'] = image_path
         return response_dict
     except Exception as e:
@@ -356,8 +375,36 @@ def process_and_respond(phone_number: str, image_path: str) -> None:
 
         # 3. Retour utilisateur selon le cas
         if updated_fields:
-            champs = ', '.join(updated_fields)
-            send_whatsapp_message(phone_number, f"✅ Facture existante, informations complémentaires ajoutées ou mises à jour : {champs}")
+            montant = facture_data.get("montant_ttc", "??")
+            magasin = facture_data.get("vendeur_nom", "??")
+            date_vente = facture_data.get("date_vente", "??")
+            heure = facture_data.get("heure", "??")
+            champs = "\n".join(
+                f"• {field} : {facture_data.get(field, '')}"
+                for field in updated_fields if field != "image_path"
+            )
+            # Envoi de plusieurs messages WhatsApp séparés
+            if heure == "??" or not heure:
+                send_whatsapp_message(
+                    phone_number,
+                    f"✅Transaction trouvée! Je l'ai associé à votre paiement de {montant}€ chez {magasin} du {date_vente}."
+                )
+            else:
+                send_whatsapp_message(
+                    phone_number,
+                    f"✅Transaction trouvée! Je l'ai associé à votre paiement de {montant}€ chez {magasin} du {date_vente} à {heure}."
+                )
+            send_whatsapp_message(
+                phone_number,
+                "Je l'ai associé à la transaction automatiquement."
+            )
+            if champs:
+                send_whatsapp_message(
+                    phone_number,
+                    f"Informations complémentaires ajoutées ou mises à jour :\n{champs}"
+                )
+            return
+            send_whatsapp_message(phone_number, message)
             return
         else:
             send_whatsapp_message(phone_number, "🆕 Nouvelle facture enregistrée avec succès.")
