@@ -256,26 +256,34 @@ def process_and_respond(phone_number: str, image_bytes: bytes) -> None:
         logger.info("Base de données mise à jour")
 
         montant = facture_data.get("montant_ttc", "??")
-        magasin = facture_data.get("vendeur_nom", "??")
         date_vente = facture_data.get("date_vente", "??")
         heure = facture_data.get("heure", "??")
-        champs = "\n".join(
-            f"• {field} : {facture_data.get(field, '')}"
-            for field in updated_fields if field not in ("image_path", "image_hash")
-        )
 
-        date_heure_str = format_date_heure(date_vente, heure)
+        # Formatage de la date et du jour
+        try:
+            dt = datetime.strptime(date_vente, "%Y-%m-%d")
+            jour = dt.strftime("%A").capitalize()
+            date_str = dt.strftime("%d/%m/%Y")
+        except Exception:
+            jour = "?"
+            date_str = date_vente
+
+        heure_str = heure if heure and heure != "??" else "?"
 
         # Si tous les champs sont nouveaux, c'est une nouvelle facture
         if len(updated_fields) == len(facture_data.keys()):
             send_whatsapp_message(
                 phone_number,
-                f"🆕 Nouvelle facture ajoutée ! Je l'ai associée à votre paiement de {montant}€ chez {magasin} {date_heure_str}."
+                f"🆕 Nouvelle facture détectée de {montant}€ le {jour} {date_str} à {heure_str}."
             )
         else:
             send_whatsapp_message(
                 phone_number,
-                "Cette facture existe déjà dans la base, elle va être enrichie des nouvelles informations extraites."
+                "✅ Cette facture existe déjà. Je vais l'enrichir avec les nouvelles informations que vous avez données."
+            )
+            champs = "\n".join(
+                f"• {field} : {facture_data.get(field, '')}"
+                for field in updated_fields if field not in ("image_path", "image_hash")
             )
             if champs:
                 send_whatsapp_message(
