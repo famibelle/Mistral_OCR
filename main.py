@@ -47,6 +47,7 @@ twilio_client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
 
 from b2sdk.v2 import InMemoryAccountInfo, B2Api
 from io import BytesIO
+import locale
 
 # Initialisation du client B2 (Backblaze)
 B2_APPLICATION_KEY_ID = os.getenv("B2_APPLICATION_KEY_ID")
@@ -260,11 +261,16 @@ def process_and_respond(phone_number: str, image_bytes: bytes) -> None:
         date_vente = facture_data.get("date_vente", "??")
         heure = facture_data.get("heure", "??")
 
-        # Formatage de la date et du jour
+        # Formatage de la date et du jour au format français
         try:
+            try:
+            locale.setlocale(locale.LC_TIME, 'fr_FR.UTF-8')
+            except locale.Error:
+            pass  # Ignore si la locale n'est pas dispo (ex: Windows)
             dt = datetime.strptime(date_vente, "%Y-%m-%d")
             jour = dt.strftime("%A").capitalize()
-            date_str = dt.strftime("%d/%m/%Y")
+            date_str = dt.strftime("%d %B %Y")
+            date_str = date_str[0:3] + date_str[3:].lower()  # Pour minuscule après le 3e caractère
         except Exception:
             jour = "?"
             date_str = date_vente
