@@ -1,0 +1,26 @@
+CREATE TABLE IF NOT EXISTS Factures (
+    facture_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    numero_facture TEXT,
+    date_emission TEXT,          -- ISO YYYY-MM-DD
+    vendeur_nom TEXT,
+    vendeur_adresse TEXT,
+    vendeur_siret TEXT,
+    vendeur_tva TEXT,
+    client_nom TEXT,
+    client_adresse TEXT,
+    description TEXT,
+    date_vente TEXT,             -- ISO YYYY-MM-DD
+    heure TEXT,                  -- HH:MM (ajouté)
+    prix_unitaire_ht REAL,
+    quantite INTEGER,
+    taux_tva TEXT,               -- ex "20%"
+    montant_ht REAL,
+    montant_tva REAL,
+    montant_ttc REAL,
+    conditions_paiement TEXT,
+    mentions_legales TEXT,
+    image_path TEXT,
+    image_hash TEXT,
+    created_at TEXT,
+    UNIQUE(numero_facture, vendeur_siret)
+)
