@@ -293,9 +293,36 @@ def process_and_respond(phone_number: str, image_bytes: bytes) -> None:
                 for field in updated_fields if field not in ("image_path", "image_hash")
             )
             if champs:
+                # Mapping des champs à des labels plus lisibles
+                field_labels = {
+                    "numero_facture": "Numéro de facture",
+                    "date_emission": "Date d'émission",
+                    "vendeur_nom": "Vendeur",
+                    "vendeur_adresse": "Adresse du vendeur",
+                    "vendeur_siret": "SIRET vendeur",
+                    "vendeur_tva": "TVA vendeur",
+                    "client_nom": "Client",
+                    "client_adresse": "Adresse du client",
+                    "description": "Description",
+                    "date_vente": "Date de vente",
+                    "heure": "Heure",
+                    "prix_unitaire_ht": "Prix unitaire HT",
+                    "quantite": "Quantité",
+                    "taux_tva": "Taux TVA",
+                    "montant_ht": "Montant HT",
+                    "montant_tva": "Montant TVA",
+                    "montant_ttc": "Montant TTC",
+                    "conditions_paiement": "Conditions de paiement",
+                    "mentions_legales": "Mentions légales",
+                    "devise": "Devise",
+                }
+                champs_humain = "\n".join(
+                    f"• {field_labels.get(field, field)} : {facture_data.get(field, '')}"
+                    for field in updated_fields if field not in ("image_path", "image_hash")
+                )
                 send_whatsapp_message(
                     phone_number,
-                    f"Informations ajoutées ou modifiées :\n{champs}"
+                    f"Informations ajoutées ou modifiées :\n{champs_humain}"
                 )
             else:
                 send_whatsapp_message(
