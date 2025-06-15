@@ -280,7 +280,7 @@ def process_and_respond(phone_number: str, image_bytes: bytes) -> None:
         else:
             send_whatsapp_message(
                 phone_number,
-                "✅ Cette facture existe déjà. Je vais l'enrichir avec les nouvelles informations que vous avez données."
+                f"✅ Cette facture {numero_facture} du {jour} {date_str} à {heure_str} existe déjà. Je vais l'enrichir avec les nouvelles informations que vous avez données."
             )
             champs = "\n".join(
                 f"• {field} : {facture_data.get(field, '')}"
@@ -290,6 +290,11 @@ def process_and_respond(phone_number: str, image_bytes: bytes) -> None:
                 send_whatsapp_message(
                     phone_number,
                     f"Informations ajoutées ou modifiées :\n{champs}"
+                )
+            else:
+                send_whatsapp_message(
+                    phone_number,
+                    f"Tout est déjà à jour pour la facture {numero_facture}"
                 )
         return
     except Exception as e:
@@ -339,7 +344,7 @@ montant_ttc, conditions_paiement, mentions_legales, image_path, created_at
     prompt = (
         f"{schema}\n"
         "Génère uniquement une requête SQL SELECT valide (sans explication), "
-        "en sélectionnant par défaut les colonnes montant_ttc, date_vente, heure et description, "
+        "en sélectionnant, sauf mention contraire, les colonnes montant_ttc, date_vente, heure et description, "
         "pour répondre à :\n"
         f"\"{req.question}\""
     )
