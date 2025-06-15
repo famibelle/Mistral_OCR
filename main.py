@@ -1,6 +1,8 @@
 import base64
 import os
-import sqlite3
+import sqlalchemy
+from sqlalchemy import create_engine, text
+from sqlalchemy.exc import SQLAlchemyError
 from fastapi import FastAPI, HTTPException, Request, BackgroundTasks
 from fastapi.responses import JSONResponse
 from mistralai import Mistral, ImageURLChunk, TextChunk
@@ -34,6 +36,10 @@ USER_PHONE_NUMBER = os.getenv('USER_PHONE_NUMBER')
 
 # Configuration de Mistral
 MISTRAL_API_KEY = os.getenv('MISTRAL_API_KEY')
+
+# Configuration Render/PostgreSQL
+DATABASE_URL = os.getenv("DATABASE_URL")
+engine = create_engine(DATABASE_URL)
 
 # Initialiser les clients
 mistral_client = Mistral(api_key=MISTRAL_API_KEY)
@@ -71,7 +77,6 @@ def encode_image(image_bytes: bytes) -> str:
     """Encode des bytes d'image en base64."""
     return base64.b64encode(image_bytes).decode("utf-8")
 
-# --- Dans process_image, pour que image_path soit toujours une liste JSON dans la base ---
 def process_image(image_bytes: bytes) -> dict:
     """Traite une image de facture (en bytes) et extrait les informations."""
     try:
@@ -139,7 +144,6 @@ Assure-toi que le JSON est valide et que les champs sont bien formatés.
         )
 
         response_dict = json.loads(chat_response.choices[0].message.content)
-        # Toujours retourner le chemin de la nouvelle image (pour ajout dans la liste)
         response_dict['image_path'] = None
         return response_dict
     except Exception as e:
@@ -152,7 +156,7 @@ def send_whatsapp_message(to: str, body: str) -> str:
         message = twilio_client.messages.create(
             body=body,
             from_=f'whatsapp:{TWILIO_PHONE_NUMBER}',
-            to=to  # Ici, on utilise le numéro de l'expéditeur
+            to=to
         )
         return message.sid
     except Exception as e:
@@ -203,8 +207,6 @@ def process_incoming_message(data: dict, background_tasks: BackgroundTasks) -> N
         media_url = data[media_url_key]
         response = requests.get(media_url)
         response.raise_for_status()
-
-        # On ne sauvegarde plus l'image, on passe les bytes directement
         image_bytes = response.content
 
         # Traiter l'image en arrière-plan
@@ -212,11 +214,10 @@ def process_incoming_message(data: dict, background_tasks: BackgroundTasks) -> N
     except Exception as e:
         logger.error(f"Erreur lors du traitement du message entrant: {e}")
 
-
 def process_and_respond(phone_number: str, image_bytes: bytes) -> None:
     try:
         send_whatsapp_message(phone_number, "Merci pour votre envoi ! Je m'en occupe... ⏳")
-        facture_data = process_image(image_bytes)  # On passe les bytes
+        facture_data = process_image(image_bytes)
         logger.info(f"Données extraites: {facture_data}")
         updated_fields = check_and_update_database(facture_data)
         logger.info("Base de données mise à jour")
@@ -230,7 +231,6 @@ def process_and_respond(phone_number: str, image_bytes: bytes) -> None:
             for field in updated_fields if field not in ("image_path", "image_hash")
         )
 
-        # Utilise la fonction de formatage pour la date et l'heure
         date_heure_str = format_date_heure(date_vente, heure)
 
         send_whatsapp_message(
@@ -285,7 +285,7 @@ async def query_factures(req: QueryRequest):
     """
     # 1. Décrire le schéma à passer au LLM
     schema = """
-Table Factures (SQLite – factures.db) :
+Table Factures (PostgreSQL) :
 facture_id, numero_facture, date_emission, vendeur_nom, vendeur_adresse,
 vendeur_siret, vendeur_tva, client_nom, client_adresse, description,
 date_vente, prix_unitaire_ht, quantite, taux_tva, montant_ht, montant_tva,
@@ -315,16 +315,13 @@ montant_ttc, conditions_paiement, mentions_legales, image_path, created_at
 
     # 4. Exécution sur la base factures.db
     try:
-        conn = sqlite3.connect('factures.db')
-        cursor = conn.cursor()
-        cursor.execute(sql)
-        rows = cursor.fetchall()
-        cols = [col[0] for col in cursor.description]
+        with engine.connect() as conn:
+            result = conn.execute(text(sql))
+            rows = result.fetchall()
+            cols = result.keys()
     except Exception as e:
         logger.error(f"Erreur SQL ({sql}): {e}")
         raise HTTPException(500, "Erreur lors de l'exécution de la requête SQL.")
-    finally:
-        conn.close()
 
     # 5. Retour JSON
     results = [dict(zip(cols, row)) for row in rows]
@@ -347,47 +344,136 @@ montant_ttc, conditions_paiement, mentions_legales, image_path, created_at
 
     return {"query": sql, "results": results}
 
-def reconciliation_donnees(facture_data: dict) -> dict:
+def check_and_update_database(data: dict) -> list:
     """
-    Exemple de fonction de réconciliation de données.
-    À remplacer par ta logique métier réelle.
+    Insère ou met à jour une facture dans la base PostgreSQL selon le quadruplet
+    (date_vente, heure, montant_ht, montant_ttc) comme identifiant unique.
+    Retourne la liste des champs mis à jour ou ajoutés.
     """
-    # Exemple : toujours retourner un cas unique pour tester
-    return {
-        "type": "unique",
-        "montant": facture_data.get("montant_ttc", "??"),
-        "magasin": facture_data.get("vendeur_nom", "??"),
-        "date": facture_data.get("date_vente", "??"),
-        "heure": "??"
-    }
+    updated_fields = []
+    with engine.begin() as conn:
+        # Création de la table si besoin (PostgreSQL)
+        conn.execute(text('''
+            CREATE TABLE IF NOT EXISTS Factures (
+                facture_id SERIAL PRIMARY KEY,
+                numero_facture TEXT,
+                date_emission DATE,
+                vendeur_nom TEXT,
+                vendeur_adresse TEXT,
+                vendeur_siret TEXT,
+                vendeur_tva TEXT,
+                client_nom TEXT,
+                client_adresse TEXT,
+                description TEXT,
+                date_vente DATE,
+                heure TIME,
+                prix_unitaire_ht REAL,
+                quantite INTEGER,
+                taux_tva TEXT,
+                montant_ht REAL,
+                montant_tva REAL,
+                montant_ttc REAL,
+                conditions_paiement TEXT,
+                mentions_legales TEXT,
+                image_path TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(date_vente, heure, montant_ht, montant_ttc)
+            )
+        '''))
 
-def compute_perceptual_hash(image_path: str) -> str:
-    """
-    Calcule et retourne le hash perceptuel (pHash) de l'image.
-    Utile pour détecter les duplications ou similitudes d'images.
-    """
-    try:
-        img = Image.open(image_path)
-        phash = imagehash.phash(img)
-        return str(phash)
-    except Exception as e:
-        logger.error(f"Erreur lors du calcul du perceptual hash pour {image_path}: {e}")
-        return ""
+        # Recherche d'une facture existante sur le quadruplet
+        result = conn.execute(
+            text("""
+                SELECT * FROM Factures
+                WHERE date_vente = :date_vente AND heure = :heure AND montant_ht = :montant_ht AND montant_ttc = :montant_ttc
+            """),
+            {
+                "date_vente": data.get('date_vente'),
+                "heure": data.get('heure'),
+                "montant_ht": data.get('montant_ht'),
+                "montant_ttc": data.get('montant_ttc'),
+            }
+        )
+        existing = result.fetchone()
+        cols = result.keys()
+
+        if not existing:
+            # Nouvelle facture : INSERT
+            conn.execute(
+                text('''
+                    INSERT INTO Factures (
+                        numero_facture, date_emission, vendeur_nom, vendeur_adresse,
+                        vendeur_siret, vendeur_tva, client_nom, client_adresse,
+                        description, date_vente, heure, prix_unitaire_ht, quantite,
+                        taux_tva, montant_ht, montant_tva, montant_ttc,
+                        conditions_paiement, mentions_legales,
+                        image_path, created_at
+                    ) VALUES (
+                        :numero_facture, :date_emission, :vendeur_nom, :vendeur_adresse,
+                        :vendeur_siret, :vendeur_tva, :client_nom, :client_adresse,
+                        :description, :date_vente, :heure, :prix_unitaire_ht, :quantite,
+                        :taux_tva, :montant_ht, :montant_tva, :montant_ttc,
+                        :conditions_paiement, :mentions_legales,
+                        :image_path, :created_at
+                    )
+                '''), {
+                    "numero_facture": data.get('numero_facture'),
+                    "date_emission": data.get('date_emission'),
+                    "vendeur_nom": data.get('vendeur_nom'),
+                    "vendeur_adresse": data.get('vendeur_adresse'),
+                    "vendeur_siret": data.get('vendeur_siret'),
+                    "vendeur_tva": data.get('vendeur_tva'),
+                    "client_nom": data.get('client_nom'),
+                    "client_adresse": data.get('client_adresse'),
+                    "description": data.get('description'),
+                    "date_vente": data.get('date_vente'),
+                    "heure": data.get('heure'),
+                    "prix_unitaire_ht": data.get('prix_unitaire_ht'),
+                    "quantite": data.get('quantite'),
+                    "taux_tva": data.get('taux_tva'),
+                    "montant_ht": data.get('montant_ht'),
+                    "montant_tva": data.get('montant_tva'),
+                    "montant_ttc": data.get('montant_ttc'),
+                    "conditions_paiement": data.get('conditions_paiement'),
+                    "mentions_legales": data.get('mentions_legales'),
+                    "image_path": data.get('image_path'),
+                    "created_at": data.get('created_at', datetime.now().isoformat())
+                }
+            )
+            updated_fields = list(data.keys())
+        else:
+            # Facture existante : UPDATE si nouveaux champs
+            for idx, col in enumerate(cols):
+                if col in ("facture_id", "date_vente", "heure", "montant_ht", "montant_ttc"):
+                    continue
+                new_value = data.get(col)
+                old_value = existing[idx]
+                if new_value not in (None, "") and str(new_value) != str(old_value):
+                    updated_fields.append(col)
+            if updated_fields:
+                update_fields = ", ".join([f"{col}=:{col}" for col in updated_fields])
+                update_sql = f'''
+                    UPDATE Factures SET {update_fields}
+                    WHERE date_vente = :date_vente AND heure = :heure AND montant_ht = :montant_ht AND montant_ttc = :montant_ttc
+                '''
+                params = {col: data.get(col) for col in updated_fields}
+                params.update({
+                    "date_vente": data.get('date_vente'),
+                    "heure": data.get('heure'),
+                    "montant_ht": data.get('montant_ht'),
+                    "montant_ttc": data.get('montant_ttc')
+                })
+                conn.execute(text(update_sql), params)
+    return updated_fields
 
 def format_date_heure(date_iso: str, heure: str) -> str:
-    """
-    Transforme '2025-06-14' et '16:14' en 'le 14 juin 2025 à 16h14'
-    """
     try:
-        # Pour avoir les mois en français
         locale.setlocale(locale.LC_TIME, 'fr_FR.UTF-8')
     except:
-        pass  # Sur Windows, il peut être nécessaire d'installer le pack de langue
-
+        pass
     try:
         dt = datetime.strptime(date_iso, "%Y-%m-%d")
         date_str = dt.strftime("%d %B %Y")
-        # Mettre la première lettre du mois en minuscule
         date_str = date_str[0:3] + date_str[3:].lower()
     except Exception:
         date_str = date_iso
@@ -398,159 +484,10 @@ def format_date_heure(date_iso: str, heure: str) -> str:
     else:
         return f"le {date_str}"
 
-# Création du dossier uploads si nécessaire
-os.makedirs("uploads", exist_ok=True)
-def save_image(image_data: bytes, filename: str) -> str:
-    """
-    Sauvegarde l'image en local dans uploads/ et retourne le chemin.
-    """
-    path = os.path.join("uploads", filename)
-    with open(path, "wb") as f:
-        f.write(image_data)
-    return path
-
-def check_and_update_database(data: dict) -> list:
-    """
-    Insère ou met à jour une facture dans la base SQLite selon le quadruplet
-    (date_vente, heure, montant_ht, montant_ttc) comme identifiant unique.
-    Retourne la liste des champs mis à jour ou ajoutés.
-    """
-    updated_fields = []
-    conn = sqlite3.connect('factures.db')
-    cursor = conn.cursor()
-
-    # Création de la table si besoin (avec tous les champs)
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS Factures (
-            facture_id INTEGER PRIMARY KEY AUTOINCREMENT,
-            numero_facture TEXT,
-            date_emission TEXT,
-            vendeur_nom TEXT,
-            vendeur_adresse TEXT,
-            vendeur_siret TEXT,
-            vendeur_tva TEXT,
-            client_nom TEXT,
-            client_adresse TEXT,
-            description TEXT,
-            date_vente TEXT,
-            heure TEXT,
-            prix_unitaire_ht REAL,
-            quantite INTEGER,
-            taux_tva TEXT,
-            montant_ht REAL,
-            montant_tva REAL,
-            montant_ttc REAL,
-            conditions_paiement TEXT,
-            mentions_legales TEXT,
-            image_path TEXT,
-            created_at TEXT,
-            UNIQUE(date_vente, heure, montant_ht, montant_ttc)
-        )
-    ''')
-
-    # Recherche d'une facture existante sur le quadruplet
-    cursor.execute(
-        """
-        SELECT * FROM Factures
-        WHERE date_vente = ? AND heure = ? AND montant_ht = ? AND montant_ttc = ?
-        """,
-        (
-            data.get('date_vente'),
-            data.get('heure'),
-            data.get('montant_ht'),
-            data.get('montant_ttc'),
-        )
-    )
-    existing = cursor.fetchone()
-    cols = [d[0] for d in cursor.description]
-
-    if not existing:
-        # Nouvelle facture : INSERT
-        cursor.execute('''
-            INSERT INTO Factures (
-                numero_facture, date_emission, vendeur_nom, vendeur_adresse,
-                vendeur_siret, vendeur_tva, client_nom, client_adresse,
-                description, date_vente, heure, prix_unitaire_ht, quantite,
-                taux_tva, montant_ht, montant_tva, montant_ttc,
-                conditions_paiement, mentions_legales,
-                image_path, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (
-            data.get('numero_facture'),
-            data.get('date_emission'),
-            data.get('vendeur_nom'),
-            data.get('vendeur_adresse'),
-            data.get('vendeur_siret'),
-            data.get('vendeur_tva'),
-            data.get('client_nom'),
-            data.get('client_adresse'),
-            data.get('description'),
-            data.get('date_vente'),
-            data.get('heure'),
-            data.get('prix_unitaire_ht'),
-            data.get('quantite'),
-            data.get('taux_tva'),
-            data.get('montant_ht'),
-            data.get('montant_tva'),
-            data.get('montant_ttc'),
-            data.get('conditions_paiement'),
-            data.get('mentions_legales'),
-            data.get('image_path'),
-            data.get('created_at', datetime.now().isoformat())
-        ))
-        updated_fields = list(data.keys())
-    else:
-        # Facture existante : UPDATE si nouveaux champs
-        for idx, col in enumerate(cols):
-            if col in ("facture_id", "date_vente", "heure", "montant_ht", "montant_ttc"):
-                continue
-            new_value = data.get(col)
-            old_value = existing[idx]
-            if new_value not in (None, "") and str(new_value) != str(old_value):
-                updated_fields.append(col)
-        # Appliquer la mise à jour
-        if updated_fields:
-            cursor.execute('''
-                UPDATE Factures SET
-                    numero_facture=?, date_emission=?, vendeur_nom=?, vendeur_adresse=?,
-                    vendeur_siret=?, vendeur_tva=?, client_nom=?, client_adresse=?,
-                    description=?, prix_unitaire_ht=?, quantite=?, taux_tva=?,
-                    montant_tva=?, montant_ttc=?, conditions_paiement=?,
-                    mentions_legales=?, image_path=?, created_at=?
-                WHERE date_vente = ? AND heure = ? AND montant_ht = ? AND montant_ttc = ?
-            ''', (
-                data.get('numero_facture'),
-                data.get('date_emission'),
-                data.get('vendeur_nom'),
-                data.get('vendeur_adresse'),
-                data.get('vendeur_siret'),
-                data.get('vendeur_tva'),
-                data.get('client_nom'),
-                data.get('client_adresse'),
-                data.get('description'),
-                data.get('prix_unitaire_ht'),
-                data.get('quantite'),
-                data.get('taux_tva'),
-                data.get('montant_tva'),
-                data.get('montant_ttc'),
-                data.get('conditions_paiement'),
-                data.get('mentions_legales'),
-                data.get('image_path'),
-                data.get('created_at', datetime.now().isoformat()),
-                # Critère unique
-                data.get('date_vente'),
-                data.get('heure'),
-                data.get('montant_ht'),
-                data.get('montant_ttc'),
-            ))
-    conn.commit()
-    conn.close()
-    return updated_fields
-
 if __name__ == "__main__":
     uvicorn.run(
         app,
         host="0.0.0.0",
-        port=int(os.getenv('PORT', 8000)),
+        port=int(os.getenv('PORT', 10000)),
         log_level="info"
     )
