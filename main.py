@@ -412,7 +412,22 @@ montant_ttc, conditions_paiement, mentions_legales, image_path, created_at
     if not results:
         logger.info("Aucun résultat trouvé pour la requête SQL.")
     else:
-        logger.info(f"Résultats de la requête : {results}")    
+        # Formatage human readable des résultats
+        readable_results = []
+        for row in results:
+            parts = []
+            if "date_vente" in row and row["date_vente"]:
+                parts.append(f"Date: {row['date_vente']}")
+            if "heure" in row and row["heure"]:
+                parts.append(f"Heure: {row['heure']}")
+            if "montant_ttc" in row and row["montant_ttc"] is not None:
+                parts.append(f"Montant TTC: {row['montant_ttc']} €")
+            if "description" in row and row["description"]:
+                parts.append(f"Détails: {row['description']}")
+            # Ajoute d'autres champs utiles si besoin
+            readable_results.append(" | ".join(parts))
+        logger.info(f"Résultats de la requête (lisibles): {readable_results}")
+        results = readable_results
 
     # Si trop de colonnes (ex : SELECT *), demander une clarification
     if len(cols) > 6:  # seuil à ajuster selon ton besoin
