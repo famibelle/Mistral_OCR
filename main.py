@@ -256,6 +256,7 @@ def process_and_respond(phone_number: str, image_bytes: bytes) -> None:
         logger.info("Base de données mise à jour")
 
         montant = facture_data.get("montant_ttc", "??")
+        numero_facture = facture_data.get("numero_facture", "??")
         date_vente = facture_data.get("date_vente", "??")
         heure = facture_data.get("heure", "??")
 
@@ -274,7 +275,7 @@ def process_and_respond(phone_number: str, image_bytes: bytes) -> None:
         if len(updated_fields) == len(facture_data.keys()):
             send_whatsapp_message(
                 phone_number,
-                f"🆕 Nouvelle facture détectée de {montant}€ le {jour} {date_str} à {heure_str}."
+                f"🆕 Nouvelle facture détectée numéro {numero_facture} le {jour} {date_str} à {heure_str}."
             )
         else:
             send_whatsapp_message(
@@ -391,7 +392,7 @@ montant_ttc, conditions_paiement, mentions_legales, image_path, created_at
 def check_and_update_database(data: dict) -> list:
     """
     Insère ou met à jour une facture dans la base PostgreSQL selon le quadruplet
-    (date_vente, heure, montant_ht, montant_ttc) comme identifiant unique.
+    (date_vente, heure, montant_ht, numero_facture) comme identifiant unique.
     Retourne la liste des champs mis à jour ou ajoutés.
     """
     updated_fields = []
@@ -421,7 +422,7 @@ def check_and_update_database(data: dict) -> list:
                 mentions_legales TEXT,
                 image_path TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(date_vente, heure, montant_ht, montant_ttc)
+                UNIQUE(date_vente, heure, montant_ht, numero_facture)
             )
         '''))
 
@@ -429,13 +430,13 @@ def check_and_update_database(data: dict) -> list:
         result = conn.execute(
             text("""
                 SELECT * FROM Factures
-                WHERE date_vente = :date_vente AND heure = :heure AND montant_ht = :montant_ht AND montant_ttc = :montant_ttc
+                WHERE date_vente = :date_vente AND heure = :heure AND montant_ht = :montant_ht AND numero_facture = :numero_facture
             """),
             {
                 "date_vente": data.get('date_vente'),
                 "heure": data.get('heure'),
                 "montant_ht": data.get('montant_ht'),
-                "montant_ttc": data.get('montant_ttc'),
+                "numero_facture": data.get('numero_facture'),
             }
         )
         existing = result.fetchone()
@@ -488,7 +489,7 @@ def check_and_update_database(data: dict) -> list:
         else:
             # Facture existante : UPDATE si nouveaux champs
             for idx, col in enumerate(cols):
-                if col in ("facture_id", "date_vente", "heure", "montant_ht", "montant_ttc"):
+                if col in ("facture_id", "date_vente", "heure", "montant_ht", "numero_facture"):
                     continue
                 new_value = data.get(col)
                 old_value = existing[idx]
@@ -498,14 +499,14 @@ def check_and_update_database(data: dict) -> list:
                 update_fields = ", ".join([f"{col}=:{col}" for col in updated_fields])
                 update_sql = f'''
                     UPDATE Factures SET {update_fields}
-                    WHERE date_vente = :date_vente AND heure = :heure AND montant_ht = :montant_ht AND montant_ttc = :montant_ttc
+                    WHERE date_vente = :date_vente AND heure = :heure AND montant_ht = :montant_ht AND numero_facture = :numero_facture
                 '''
                 params = {col: data.get(col) for col in updated_fields}
                 params.update({
                     "date_vente": data.get('date_vente'),
                     "heure": data.get('heure'),
                     "montant_ht": data.get('montant_ht'),
-                    "montant_ttc": data.get('montant_ttc')
+                    "numero_facture": data.get('numero_facture')
                 })
                 conn.execute(text(update_sql), params)
     return updated_fields
