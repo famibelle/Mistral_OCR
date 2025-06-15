@@ -427,7 +427,6 @@ montant_ttc, conditions_paiement, mentions_legales, image_path, created_at
             # Ajoute d'autres champs utiles si besoin
             readable_results.append(" | ".join(parts))
         logger.info(f"Résultats de la requête (lisibles): {readable_results}")
-        results = readable_results
 
     # Si trop de colonnes (ex : SELECT *), demander une clarification
     if len(cols) > 6:  # seuil à ajuster selon ton besoin
