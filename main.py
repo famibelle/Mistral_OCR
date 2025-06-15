@@ -67,192 +67,15 @@ class Facture(BaseModel):
 class QueryRequest(BaseModel):
     question: str
 
-def encode_image(image_path: str) -> Optional[str]:
-    """Encode l'image en base64."""
-    try:
-        with open(image_path, "rb") as image_file:
-            return base64.b64encode(image_file.read()).decode('utf-8')
-    except FileNotFoundError:
-        logger.error(f"Fichier non trouvé: {image_path}")
-        return None
-    except Exception as e:
-        logger.error(f"Erreur lors de l'encodage de l'image: {e}")
-        return None
-
-def save_image(image_data: bytes, filename: str) -> str:
-    """Sauvegarde l'image localement."""
-    try:
-        upload_dir = "uploads"
-        os.makedirs(upload_dir, exist_ok=True)
-        image_path = os.path.join(upload_dir, filename)
-        with open(image_path, "wb") as f:
-            f.write(image_data)
-        return image_path
-    except Exception as e:
-        logger.error(f"Erreur lors de la sauvegarde de l'image: {e}")
-        raise
-
-def check_and_update_database(data: dict) -> list:
-    """
-    On considère désormais comme identifiant unique d'une facture
-    le quadruplet (date_vente, heure, montant_ht, montant_ttc).
-    """
-    updated_fields = []
-    conn = sqlite3.connect('factures.db')
-    cursor = conn.cursor()
-
-    # 1) Créer la table si elle n'existe pas, avec UNIQUE sur le quadruplet
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS Factures (
-            facture_id INTEGER PRIMARY KEY AUTOINCREMENT,
-            numero_facture TEXT,
-            date_emission TEXT,
-            vendeur_nom TEXT,
-            vendeur_adresse TEXT,
-            vendeur_siret TEXT,
-            vendeur_tva TEXT,
-            client_nom TEXT,
-            client_adresse TEXT,
-            description TEXT,
-            date_vente TEXT,
-            heure TEXT,
-            prix_unitaire_ht REAL,
-            quantite INTEGER,
-            taux_tva TEXT,
-            montant_ht REAL,
-            montant_tva REAL,
-            montant_ttc REAL,
-            conditions_paiement TEXT,
-            mentions_legales TEXT,
-            image_path TEXT,
-            image_hash TEXT,
-            created_at TEXT,
-            UNIQUE(date_vente, heure, montant_ht, montant_ttc)
-        )
-    ''')
-
-    # 2) Vérifier existence sur (date_vente, heure, montant_ht, montant_ttc)
-    cursor.execute(
-        """
-        SELECT * FROM Factures
-        WHERE date_vente = ?
-          AND heure = ?
-          AND montant_ht = ?
-          AND montant_ttc = ?
-        """,
-        (
-            data.get('date_vente'),
-            data.get('heure'),
-            data.get('montant_ht'),
-            data.get('montant_ttc'),
-        )
-    )
-    existing = cursor.fetchone()
-    cols = [d[0] for d in cursor.description]
-
-    new_path = data.get('image_path')
-    new_hash = compute_perceptual_hash(new_path) if new_path else None
-
-    if not existing:
-        # Nouvelle facture : INSERT
-        paths = [new_path] if new_path else []
-        hashes = [new_hash] if new_hash else []
-        cursor.execute('''
-            INSERT INTO Factures (
-                numero_facture, date_emission, vendeur_nom, vendeur_adresse,
-                vendeur_siret, vendeur_tva, client_nom, client_adresse,
-                description, date_vente, heure, prix_unitaire_ht, quantite,
-                taux_tva, montant_ht, montant_tva, montant_ttc,
-                conditions_paiement, mentions_legales,
-                image_path, image_hash, created_at
-            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-        ''', (
-            data.get('numero_facture'),
-            data.get('date_emission'),
-            data.get('vendeur_nom'),
-            data.get('vendeur_adresse'),
-            data.get('vendeur_siret'),
-            data.get('vendeur_tva'),
-            data.get('client_nom'),
-            data.get('client_adresse'),
-            data.get('description'),
-            data.get('date_vente'),       # 10ᵉ valeur
-            data.get('heure'),            # 11ᵉ valeur – NE PAS OUBLIER
-            data.get('prix_unitaire_ht'), # 12ᵉ
-            data.get('quantite'),
-            data.get('taux_tva'),
-            data.get('montant_ht'),
-            data.get('montant_tva'),
-            data.get('montant_ttc'),
-            data.get('conditions_paiement'),
-            data.get('mentions_legales'),
-            json.dumps(paths),
-            json.dumps(hashes),
-            data.get('created_at', datetime.now().isoformat())
-        ))
-        logger.info("Nouvelle facture insérée.")
-    else:
-        # Facture existante : UPDATE
-        old_paths = json.loads(existing[cols.index('image_path')] or '[]')
-        old_hashes = json.loads(existing[cols.index('image_hash')] or '[]')
-        if new_hash and new_hash not in old_hashes:
-            old_paths.append(new_path)
-            old_hashes.append(new_hash)
-            updated_fields += ['image_path', 'image_hash']
-        # Vérification des autres champs
-        for idx, col in enumerate(cols):
-            if col in ("facture_id", "date_vente", "heure", "montant_ht", "montant_ttc", "image_path", "image_hash"):
-                continue
-            new_value = data.get(col)
-            old_value = existing[idx]
-            if new_value not in (None, "") and str(new_value) != str(old_value):
-                updated_fields.append(col)
-        # Appliquer la mise à jour
-        cursor.execute('''
-            UPDATE Factures SET
-                numero_facture=?, date_emission=?, vendeur_nom=?, vendeur_adresse=?,
-                vendeur_siret=?, vendeur_tva=?, client_nom=?, client_adresse=?,
-                description=?, prix_unitaire_ht=?, quantite=?, taux_tva=?,
-                montant_ht=?, montant_tva=?, montant_ttc=?, conditions_paiement=?,
-                mentions_legales=?, image_path=?, image_hash=?, created_at=?
-            WHERE date_vente = ? AND heure = ? AND montant_ht = ? AND montant_ttc = ?
-        ''', (
-            data.get('numero_facture'),
-            data.get('date_emission'),
-            data.get('vendeur_nom'),
-            data.get('vendeur_adresse'),
-            data.get('vendeur_siret'),
-            data.get('vendeur_tva'),
-            data.get('client_nom'),
-            data.get('client_adresse'),
-            data.get('description'),
-            data.get('prix_unitaire_ht'),
-            data.get('quantite'),
-            data.get('taux_tva'),
-            data.get('montant_ht'),         # <-- AJOUTÉ (était manquant)
-            data.get('montant_tva'),
-            data.get('montant_ttc'),
-            data.get('conditions_paiement'),
-            data.get('mentions_legales'),
-            json.dumps(old_paths),
-            json.dumps(old_hashes),
-            data.get('created_at', datetime.now().isoformat()),
-            # Critère unique
-            data.get('date_vente'),
-            data.get('heure'),
-            data.get('montant_ht'),
-            data.get('montant_ttc'),
-        ))
-        logger.info(f"Facture mise à jour, champs modifiés : {updated_fields}")
-    conn.commit()
-    conn.close()
-    return updated_fields
+def encode_image(image_bytes: bytes) -> str:
+    """Encode des bytes d'image en base64."""
+    return base64.b64encode(image_bytes).decode("utf-8")
 
 # --- Dans process_image, pour que image_path soit toujours une liste JSON dans la base ---
-def process_image(image_path: str) -> dict:
-    """Traite une image de facture et extrait les informations."""
+def process_image(image_bytes: bytes) -> dict:
+    """Traite une image de facture (en bytes) et extrait les informations."""
     try:
-        base64_image = encode_image(image_path)
+        base64_image = base64.b64encode(image_bytes).decode("utf-8")
         if not base64_image:
             raise HTTPException(status_code=400, detail="Impossible d'encoder l'image")
 
@@ -317,7 +140,7 @@ Assure-toi que le JSON est valide et que les champs sont bien formatés.
 
         response_dict = json.loads(chat_response.choices[0].message.content)
         # Toujours retourner le chemin de la nouvelle image (pour ajout dans la liste)
-        response_dict['image_path'] = image_path
+        response_dict['image_path'] = None
         return response_dict
     except Exception as e:
         logger.error(f"Erreur lors du traitement de l'image: {e}")
@@ -381,25 +204,19 @@ def process_incoming_message(data: dict, background_tasks: BackgroundTasks) -> N
         response = requests.get(media_url)
         response.raise_for_status()
 
-        # Sauvegarder l'image localement
-        filename = f"facture_{datetime.now().strftime('%Y%m%d%H%M%S')}.jpg"
-        image_path = save_image(response.content, filename)
-        logger.info(f"Image sauvegardée: {image_path}")
+        # On ne sauvegarde plus l'image, on passe les bytes directement
+        image_bytes = response.content
 
         # Traiter l'image en arrière-plan
-        background_tasks.add_task(process_and_respond, data['From'], image_path)
+        background_tasks.add_task(process_and_respond, data['From'], image_bytes)
     except Exception as e:
         logger.error(f"Erreur lors du traitement du message entrant: {e}")
 
 
-def process_and_respond(phone_number: str, image_path: str) -> None:
-    """Traite l'image et envoie une réponse à l'utilisateur."""
+def process_and_respond(phone_number: str, image_bytes: bytes) -> None:
     try:
-        # 1. Réponse immédiate à la réception du ticket avec emoji d'attente
         send_whatsapp_message(phone_number, "Merci pour votre envoi ! Je m'en occupe... ⏳")
-
-        # 2. Traitement du ticket
-        facture_data = process_image(image_path)
+        facture_data = process_image(image_bytes)  # On passe les bytes
         logger.info(f"Données extraites: {facture_data}")
         updated_fields = check_and_update_database(facture_data)
         logger.info("Base de données mise à jour")
@@ -580,6 +397,155 @@ def format_date_heure(date_iso: str, heure: str) -> str:
         return f"le {date_str} à {heure_str}"
     else:
         return f"le {date_str}"
+
+# Création du dossier uploads si nécessaire
+os.makedirs("uploads", exist_ok=True)
+def save_image(image_data: bytes, filename: str) -> str:
+    """
+    Sauvegarde l'image en local dans uploads/ et retourne le chemin.
+    """
+    path = os.path.join("uploads", filename)
+    with open(path, "wb") as f:
+        f.write(image_data)
+    return path
+
+def check_and_update_database(data: dict) -> list:
+    """
+    Insère ou met à jour une facture dans la base SQLite selon le quadruplet
+    (date_vente, heure, montant_ht, montant_ttc) comme identifiant unique.
+    Retourne la liste des champs mis à jour ou ajoutés.
+    """
+    updated_fields = []
+    conn = sqlite3.connect('factures.db')
+    cursor = conn.cursor()
+
+    # Création de la table si besoin (avec tous les champs)
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS Factures (
+            facture_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            numero_facture TEXT,
+            date_emission TEXT,
+            vendeur_nom TEXT,
+            vendeur_adresse TEXT,
+            vendeur_siret TEXT,
+            vendeur_tva TEXT,
+            client_nom TEXT,
+            client_adresse TEXT,
+            description TEXT,
+            date_vente TEXT,
+            heure TEXT,
+            prix_unitaire_ht REAL,
+            quantite INTEGER,
+            taux_tva TEXT,
+            montant_ht REAL,
+            montant_tva REAL,
+            montant_ttc REAL,
+            conditions_paiement TEXT,
+            mentions_legales TEXT,
+            image_path TEXT,
+            created_at TEXT,
+            UNIQUE(date_vente, heure, montant_ht, montant_ttc)
+        )
+    ''')
+
+    # Recherche d'une facture existante sur le quadruplet
+    cursor.execute(
+        """
+        SELECT * FROM Factures
+        WHERE date_vente = ? AND heure = ? AND montant_ht = ? AND montant_ttc = ?
+        """,
+        (
+            data.get('date_vente'),
+            data.get('heure'),
+            data.get('montant_ht'),
+            data.get('montant_ttc'),
+        )
+    )
+    existing = cursor.fetchone()
+    cols = [d[0] for d in cursor.description]
+
+    if not existing:
+        # Nouvelle facture : INSERT
+        cursor.execute('''
+            INSERT INTO Factures (
+                numero_facture, date_emission, vendeur_nom, vendeur_adresse,
+                vendeur_siret, vendeur_tva, client_nom, client_adresse,
+                description, date_vente, heure, prix_unitaire_ht, quantite,
+                taux_tva, montant_ht, montant_tva, montant_ttc,
+                conditions_paiement, mentions_legales,
+                image_path, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (
+            data.get('numero_facture'),
+            data.get('date_emission'),
+            data.get('vendeur_nom'),
+            data.get('vendeur_adresse'),
+            data.get('vendeur_siret'),
+            data.get('vendeur_tva'),
+            data.get('client_nom'),
+            data.get('client_adresse'),
+            data.get('description'),
+            data.get('date_vente'),
+            data.get('heure'),
+            data.get('prix_unitaire_ht'),
+            data.get('quantite'),
+            data.get('taux_tva'),
+            data.get('montant_ht'),
+            data.get('montant_tva'),
+            data.get('montant_ttc'),
+            data.get('conditions_paiement'),
+            data.get('mentions_legales'),
+            data.get('image_path'),
+            data.get('created_at', datetime.now().isoformat())
+        ))
+        updated_fields = list(data.keys())
+    else:
+        # Facture existante : UPDATE si nouveaux champs
+        for idx, col in enumerate(cols):
+            if col in ("facture_id", "date_vente", "heure", "montant_ht", "montant_ttc"):
+                continue
+            new_value = data.get(col)
+            old_value = existing[idx]
+            if new_value not in (None, "") and str(new_value) != str(old_value):
+                updated_fields.append(col)
+        # Appliquer la mise à jour
+        if updated_fields:
+            cursor.execute('''
+                UPDATE Factures SET
+                    numero_facture=?, date_emission=?, vendeur_nom=?, vendeur_adresse=?,
+                    vendeur_siret=?, vendeur_tva=?, client_nom=?, client_adresse=?,
+                    description=?, prix_unitaire_ht=?, quantite=?, taux_tva=?,
+                    montant_tva=?, montant_ttc=?, conditions_paiement=?,
+                    mentions_legales=?, image_path=?, created_at=?
+                WHERE date_vente = ? AND heure = ? AND montant_ht = ? AND montant_ttc = ?
+            ''', (
+                data.get('numero_facture'),
+                data.get('date_emission'),
+                data.get('vendeur_nom'),
+                data.get('vendeur_adresse'),
+                data.get('vendeur_siret'),
+                data.get('vendeur_tva'),
+                data.get('client_nom'),
+                data.get('client_adresse'),
+                data.get('description'),
+                data.get('prix_unitaire_ht'),
+                data.get('quantite'),
+                data.get('taux_tva'),
+                data.get('montant_tva'),
+                data.get('montant_ttc'),
+                data.get('conditions_paiement'),
+                data.get('mentions_legales'),
+                data.get('image_path'),
+                data.get('created_at', datetime.now().isoformat()),
+                # Critère unique
+                data.get('date_vente'),
+                data.get('heure'),
+                data.get('montant_ht'),
+                data.get('montant_ttc'),
+            ))
+    conn.commit()
+    conn.close()
+    return updated_fields
 
 if __name__ == "__main__":
     uvicorn.run(
