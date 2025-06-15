@@ -45,6 +45,20 @@ engine = create_engine(DATABASE_URL)
 mistral_client = Mistral(api_key=MISTRAL_API_KEY)
 twilio_client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
 
+from b2sdk.v2 import InMemoryAccountInfo, B2Api
+from io import BytesIO
+
+# Initialisation du client B2 (Backblaze)
+B2_APPLICATION_KEY_ID = os.getenv("B2_APPLICATION_KEY_ID")
+B2_APPLICATION_KEY = os.getenv("B2_APPLICATION_KEY")
+B2_BUCKET_NAME = os.getenv("B2_BUCKET_NAME")
+
+info = InMemoryAccountInfo()
+b2_api = B2Api(info)
+b2_api.authorize_account("production", B2_APPLICATION_KEY_ID, B2_APPLICATION_KEY)
+b2_bucket = b2_api.get_bucket_by_name(B2_BUCKET_NAME)
+
+
 app = FastAPI()
 
 # Modèles Pydantic
@@ -72,6 +86,20 @@ class Facture(BaseModel):
 
 class QueryRequest(BaseModel):
     question: str
+
+def upload_image_to_b2(image_bytes: bytes, filename: str) -> str:
+    """
+    Upload l'image sur Backblaze B2 et retourne l'URL publique.
+    """
+    file_info = b2_bucket.upload_bytes(
+        image_bytes,
+        filename,
+        content_type="image/jpeg"
+    )
+    url = f"https://f002.backblazeb2.com/file/{B2_BUCKET_NAME}/{filename}"
+    logger.info(f"Image uploadée sur B2: {url}")
+    return url
+
 
 def encode_image(image_bytes: bytes) -> str:
     """Encode des bytes d'image en base64."""
@@ -211,6 +239,9 @@ def process_incoming_message(data: dict, background_tasks: BackgroundTasks) -> N
 
         # Traiter l'image en arrière-plan
         background_tasks.add_task(process_and_respond, data['From'], image_bytes)
+
+        # Enregistrer l'image sur Backblaze B2
+        upload_image_to_b2(image_bytes, f"facture_{int(time.time())}.jpg")
     except Exception as e:
         logger.error(f"Erreur lors du traitement du message entrant: {e}")
 
