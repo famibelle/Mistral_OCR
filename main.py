@@ -159,7 +159,7 @@ Les champs à extraire sont les suivants:
 - montant_ttc (float)
 - conditions_paiement (string)
 - mentions_legales (string)
-
+- devise (string, exemple: "EUR", "USD", "GBP")
 **
 Assure-toi que tous les montants soient des nombres (float) et que le JSON soit strictement valide.
 Le JSON doit être à plat, chaque champ doit être une clé de premier niveau.**
@@ -264,9 +264,9 @@ def process_and_respond(phone_number: str, image_bytes: bytes) -> None:
         # Formatage de la date et du jour au format français
         try:
             try:
-            locale.setlocale(locale.LC_TIME, 'fr_FR.UTF-8')
+                locale.setlocale(locale.LC_TIME, 'fr_FR.UTF-8')
             except locale.Error:
-            pass  # Ignore si la locale n'est pas dispo (ex: Windows)
+                pass  # Ignore si la locale n'est pas dispo (ex: Windows)
             dt = datetime.strptime(date_vente, "%Y-%m-%d")
             jour = dt.strftime("%A").capitalize()
             date_str = dt.strftime("%d %B %Y")
@@ -286,7 +286,7 @@ def process_and_respond(phone_number: str, image_bytes: bytes) -> None:
         else:
             send_whatsapp_message(
                 phone_number,
-                f"✅ Cette facture {numero_facture} du {jour} {date_str} à {heure_str} existe déjà. Je vais l'enrichir avec les nouvelles informations que vous avez données."
+                f"✅ Cette facture numéro {numero_facture} du {jour} {date_str} à {heure_str} existe déjà. Je vais l'enrichir avec les nouvelles informations que vous avez données."
             )
             champs = "\n".join(
                 f"• {field} : {facture_data.get(field, '')}"
@@ -411,29 +411,29 @@ def check_and_update_database(data: dict) -> list:
         # Création de la table si besoin (PostgreSQL)
         conn.execute(text('''
             CREATE TABLE IF NOT EXISTS Factures (
-                facture_id SERIAL PRIMARY KEY,
-                numero_facture TEXT,
-                date_emission DATE,
-                vendeur_nom TEXT,
-                vendeur_adresse TEXT,
-                vendeur_siret TEXT,
-                vendeur_tva TEXT,
-                client_nom TEXT,
-                client_adresse TEXT,
-                description TEXT,
-                date_vente DATE,
-                heure TIME,
-                prix_unitaire_ht REAL,
-                quantite INTEGER,
-                taux_tva TEXT,
-                montant_ht REAL,
-                montant_tva REAL,
-                montant_ttc REAL,
-                conditions_paiement TEXT,
-                mentions_legales TEXT,
-                image_path TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(date_vente, heure, montant_ht, numero_facture)
+            facture_id SERIAL PRIMARY KEY,
+            numero_facture TEXT,
+            date_emission DATE,
+            vendeur_nom TEXT,
+            vendeur_adresse TEXT,
+            vendeur_siret TEXT,
+            vendeur_tva TEXT,
+            client_nom TEXT,
+            client_adresse TEXT,
+            description TEXT,
+            date_vente DATE,
+            heure TIME,
+            prix_unitaire_ht NUMERIC(12, 2),
+            quantite INTEGER,
+            taux_tva TEXT,
+            montant_ht NUMERIC(12, 2),
+            montant_tva NUMERIC(12, 2),
+            montant_ttc NUMERIC(12, 2),
+            conditions_paiement TEXT,
+            mentions_legales TEXT,
+            image_path TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(date_vente, heure, montant_ht, numero_facture)
             )
         '''))
 
