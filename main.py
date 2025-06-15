@@ -286,7 +286,12 @@ def process_and_respond(phone_number: str, image_bytes: bytes) -> None:
         else:
             send_whatsapp_message(
                 phone_number,
-                f"✅ Cette facture numéro {numero_facture} du {jour} {date_str} à {heure_str} existe déjà. Je vais l'enrichir avec les nouvelles informations que vous avez données."
+                f"✅ Cette facture numéro {numero_facture} du {jour} {date_str} à {heure_str} existe déjà."
+            )
+
+            send_whatsapp_message(
+                phone_number,
+                f"Je vais l'enrichir avec les nouvelles informations que vous avez données."
             )
             champs = "\n".join(
                 f"• {field} : {facture_data.get(field, '')}"
