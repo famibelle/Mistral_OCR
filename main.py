@@ -241,7 +241,9 @@ def process_incoming_message(data: dict, background_tasks: BackgroundTasks) -> N
         background_tasks.add_task(process_and_respond, data['From'], image_bytes)
 
         # Enregistrer l'image sur Backblaze B2
-        upload_image_to_b2(image_bytes, f"facture_{int(time.time())}.jpg")
+        phash = compute_perceptual_hash_from_bytes(image_bytes)
+        filename = f"{phash}_facture_{int(time.time())}.jpg"
+        image_url = upload_image_to_b2(image_bytes, filename)
     except Exception as e:
         logger.error(f"Erreur lors du traitement du message entrant: {e}")
 
@@ -264,19 +266,22 @@ def process_and_respond(phone_number: str, image_bytes: bytes) -> None:
 
         date_heure_str = format_date_heure(date_vente, heure)
 
-        send_whatsapp_message(
-            phone_number,
-            f"✅Transaction trouvée! Je l'ai associée à votre paiement de {montant}€ chez {magasin} {date_heure_str}."
-        )
-        send_whatsapp_message(
-            phone_number,
-            "Je l'ai associé à la transaction automatiquement."
-        )
-        if champs:
+        # Si tous les champs sont nouveaux, c'est une nouvelle facture
+        if len(updated_fields) == len(facture_data.keys()):
             send_whatsapp_message(
                 phone_number,
-                f"J'en ai profité pour rajouter des informations complémentaires à la transaction existante:\n{champs}"
+                f"🆕 Nouvelle facture ajoutée ! Je l'ai associée à votre paiement de {montant}€ chez {magasin} {date_heure_str}."
             )
+        else:
+            send_whatsapp_message(
+                phone_number,
+                "Cette facture existe déjà dans la base, elle va être enrichie des nouvelles informations extraites."
+            )
+            if champs:
+                send_whatsapp_message(
+                    phone_number,
+                    f"Informations ajoutées ou modifiées :\n{champs}"
+                )
         return
     except Exception as e:
         logger.error(f"Erreur lors du traitement et de la réponse: {e}")
@@ -514,6 +519,15 @@ def format_date_heure(date_iso: str, heure: str) -> str:
         return f"le {date_str} à {heure_str}"
     else:
         return f"le {date_str}"
+
+def compute_perceptual_hash_from_bytes(image_bytes: bytes) -> str:
+    try:
+        img = Image.open(BytesIO(image_bytes))
+        phash = imagehash.phash(img)
+        return str(phash)
+    except Exception as e:
+        logger.error(f"Erreur lors du calcul du perceptual hash: {e}")
+        return "nohash"
 
 if __name__ == "__main__":
     uvicorn.run(
