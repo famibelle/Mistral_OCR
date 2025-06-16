@@ -20,6 +20,7 @@ import asyncio
 import imagehash
 from PIL import Image
 import locale
+import re
 
 # Charger les variables d'environnement à partir du fichier .env
 dotenv.load_dotenv()
@@ -449,13 +450,13 @@ def enrich_question_with_time_context(question: str) -> str:
 
 @app.post("/query/")
 async def query_factures(req: QueryRequest):
-    """
-    Endpoint de requêtes en langage naturel.
-    Transforme la question en SQL (via un modèle texte) puis exécute
-    strictement ce SQL SELECT sur la base PostgreSQL.
-    Retourne une réponse plus lisible pour un humain.
-    """
-    # 1. Décrire le schéma à passer au LLM
+    # 1. On extrait, si présent, le nom du vendeur dans la question
+    vendeur_mention = None
+    m = re.search(r"chez\s+([^\d,?.!]+)", req.question, re.IGNORECASE)
+    if m:
+        vendeur_mention = m.group(1).strip()
+
+    # 2. Schéma pour le LLM
     schema = """
 Table Factures (PostgreSQL) :
 facture_id, numero_facture, date_emission, vendeur_nom, vendeur_adresse,
@@ -464,42 +465,45 @@ date_vente, prix_unitaire_ht, quantite, taux_tva, montant_ht, montant_tva,
 montant_ttc, conditions_paiement, mentions_legales, image_path, created_at
 """
 
-    # 2. Enrichir la question avec le contexte temporel si nécessaire
-    enriched_question = enrich_question_with_time_context(req.question)
+    # 3. Enrichissement temporel
+    enriched_q = enrich_question_with_time_context(req.question)
 
-    # 3. Génération du SQL avec un modèle texte
-    prompt = (
-        f"{schema}\n"
-        "Génère uniquement une requête SQL SELECT valide (sans explication), "
-        "en sélectionnant, sauf mention contraire, les colonnes montant_ttc, date_vente, heure, vendeur_nom et description. "
-        "Pour les champs vendeur_nom et description, utilise la fonction levenshtein pour permettre une recherche floue si la question contient un nom de vendeur ou une description. "
-        "Réponds à :\n"
-        f"\"{enriched_question}\""
-    )
+    # 4. Prompt : on demande une clause WHERE floue sur vendeur_nom
+    prompt = f"""{schema}
+Génère uniquement une requête SQL SELECT valide (sans explication), 
+en sélectionnant montant_ttc, date_vente, heure, vendeur_nom et description,
+pour répondre à :
+"{enriched_q}"
+
+— Le filtre sur le vendeur doit être flou : 
+  WHERE levenshtein(lower(vendeur_nom), lower(:vendeur_nom)) <= 2
+— Passe :vendeur_nom en paramètre.
+"""
     llm_resp = mistral_client.chat.complete(
-        model="mistral-large-latest",               # modèle texte
-        messages=[{"role": "user", "content": prompt}],
-        response_format={"type": "text"},
+        model="mistral-large-latest",
+        messages=[{"role":"user","content":prompt}],
+        response_format={"type":"text"},
         temperature=0
     )
     sql = llm_resp.choices[0].message.content.strip("```sql").strip("```").strip()
     logger.info(f"SQL générée par LLM : {sql}")
 
-    # 4. Sécurité : n’autoriser que des SELECT
+    # 5. Sécurité
     if not sql.lower().startswith("select"):
         raise HTTPException(400, "Seules les requêtes SELECT sont autorisées.")
 
-    # 5. Exécution sur la base PostgreSQL
+    # 6. Exécution avec le paramètre vendeur_nom
+    params = {"vendeur_nom": vendeur_mention or ""}
     try:
         with engine.connect() as conn:
-            result = conn.execute(text(sql))
+            result = conn.execute(text(sql), params)
             rows = result.fetchall()
             cols = result.keys()
     except Exception as e:
         logger.error(f"Erreur SQL ({sql}): {e}")
         raise HTTPException(500, "Erreur lors de l'exécution de la requête SQL.")
 
-    # 6. Formatage human readable
+    # 7. Format human readable
     if not rows:
         return {"query": sql, "results": [], "human_readable": "Aucune facture trouvée pour votre question."}
 
@@ -724,6 +728,35 @@ field_labels = {
     "mentions_legales": "Mentions légales",
     "devise": "Devise",
 }
+
+def format_human_readable_response(montant, vendeur, date, heure, description):
+    """
+    Formate une réponse human readable avec montant, vendeur, date, heure et description.
+    Si l'heure est inconnue, elle est omise.
+    """
+    # Formatage de la date
+    try:
+        dt = datetime.strptime(date, "%Y-%m-%d")
+        date_str = dt.strftime("%d %B %Y").capitalize()
+    except Exception:
+        date_str = date
+
+    # Formatage du montant
+    try:
+        montant_str = f"{float(montant):.2f}€"
+    except Exception:
+        montant_str = f"{montant}€"
+
+    # Construction de la réponse
+    if heure and heure != "?":
+        heure_str = heure.replace(":", "h", 1)
+        response = f"{montant_str} chez {vendeur} le {date_str} à {heure_str}"
+    else:
+        response = f"{montant_str} chez {vendeur} le {date_str}"
+
+    if description:
+        response += f"\n🛒 Description : {description}"
+    return response
 
 if __name__ == "__main__":
     uvicorn.run(
