@@ -129,9 +129,68 @@ def check_fuzzystrmatch():
         else:
             print("fuzzystrmatch n'est pas activée.")
 
+def create_factures_table():
+    """
+    Crée la table Factures si elle n'existe pas déjà.
+    """
+    DATABASE_URL = os.getenv("DATABASE_URL")
+    if not DATABASE_URL:
+        print("Veuillez définir la variable d'environnement DATABASE_URL.")
+        return
+
+    engine = create_engine(DATABASE_URL)
+    try:
+        with engine.connect() as conn:
+            # Vérifie si la table existe déjà (en minuscules)
+            result = conn.execute(text("""
+                SELECT EXISTS (
+                    SELECT 1
+                    FROM information_schema.tables
+                    WHERE table_name = 'factures'
+                )
+            """))
+            exists = result.scalar()
+            if exists:
+                print("La table Factures existe déjà.")
+                return
+
+        # Si la table n'existe pas, on la crée
+        with engine.begin() as conn:
+            conn.execute(text('''
+                CREATE TABLE Factures (
+                    facture_id SERIAL PRIMARY KEY,
+                    numero_facture TEXT,
+                    date_emission DATE,
+                    vendeur_nom TEXT,
+                    vendeur_adresse TEXT,
+                    vendeur_siret TEXT,
+                    vendeur_tva TEXT,
+                    client_nom TEXT,
+                    client_adresse TEXT,
+                    description TEXT,
+                    date_vente DATE,
+                    heure TIME,
+                    prix_unitaire_ht NUMERIC(12, 2),
+                    quantite INTEGER,
+                    taux_tva TEXT,
+                    montant_ht NUMERIC(12, 2),
+                    montant_tva NUMERIC(12, 2),
+                    montant_ttc NUMERIC(12, 2),
+                    conditions_paiement TEXT,
+                    mentions_legales TEXT,
+                    image_path TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(date_vente, heure, montant_ht, numero_facture)
+                )
+            '''))
+        print("Table Factures créée avec succès.")
+    except Exception as e:
+        print(f"Erreur lors de la création de la table Factures : {e}")
+
+# Ajoute l'option CLI
 if __name__ == "__main__":
     if len(sys.argv) < 2:
-        print("Usage: python db_postgres_manouvers.py [show|alter|structure|drop|fuzzystrmatch]")
+        print("Usage: python db_postgres_manouvers.py [show|alter|structure|drop|fuzzystrmatch|create]")
     elif sys.argv[1] == "show":
         show_readable_db()
     elif sys.argv[1] == "alter":
@@ -144,5 +203,7 @@ if __name__ == "__main__":
         enable_fuzzystrmatch()
     elif sys.argv[1] == "check_fuzzystrmatch":
         check_fuzzystrmatch()
+    elif sys.argv[1] == "create":
+        create_factures_table()
     else:
-        print("Argument inconnu. Utilisez 'show', 'alter', 'structure', 'drop' ou 'fuzzystrmatch'.")
+        print("Argument inconnu. Utilisez 'show', 'alter', 'structure', 'drop', 'fuzzystrmatch' ou 'create'.")
