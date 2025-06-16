@@ -148,7 +148,7 @@ Les champs à extraire sont les suivants:
 - vendeur_tva (string)
 - client_nom (string)
 - client_adresse (string)
-- description : concatène toutes les lignes d'articles en une seule chaîne de texte lisible (exemple: "Produit A x2 - 10€ HT, Produit B x1 - 5€ HT")
+- description : concatène toutes les lignes d'articles en une seule chaîne de texte lisible (exemple: " 2x Produit A - 10€ HT, 1x Produit B - 5€ HT")
 - date_vente (ISO YYYY-MM-DD)
 - heure (HH:MM)
 - prix_unitaire_ht (float)
@@ -217,17 +217,31 @@ def process_incoming_message(data: dict, background_tasks: BackgroundTasks) -> N
                         # Limite à 5 résultats pour WhatsApp
                         lines = []
                         for row in result["results"][:5]:
-                            parts = []
-                            for k, v in row.items():
-                                if k in ("image_path", "created_at"):
-                                    continue
-                                label = field_labels.get(k, k)
-                                if v is not None and v != "":
-                                    parts.append(f"{label}: {v}")
-                            lines.append(" | ".join(parts))
-                        response_text = "Voici les résultats trouvés :\n" + "\n".join(f"- {line}" for line in lines)
-                        if len(result["results"]) > 5:
-                            response_text += f"\n...et {len(result['results'])-5} autres résultat(s)."
+                            montant = row.get("montant_ttc") or row.get("montant_ht") or "?"
+
+                            vendeur = row.get("vendeur_nom") or "?"
+                            date = row.get("date_vente") or "?"
+                            heure = row.get("heure") or "?"
+                            description = row.get("description") or ""
+
+                            try:
+                                dt = datetime.strptime(date, "%Y-%m-%d")
+                                date_str = dt.strftime("%d %B").capitalize()
+                            except Exception:
+                                date_str = date
+
+                            heure_str = heure if not heure or heure == "?" else heure.replace(":", "h", 1)
+
+                            try:
+                                montant_str = f"{float(montant):.2f}€"
+                            except Exception:
+                                montant_str = f"{montant}€"
+
+                            line = f"{montant_str} chez {vendeur} le {date_str} à {heure_str}"
+                            if description:
+                                line += f"\n{description}"
+                            lines.append(line)
+                        response_text = "Voici les résultats trouvés :\n\n" + "\n\n".join(lines)
                         send_whatsapp_message(data['From'], response_text)
                     else:
                         send_whatsapp_message(data['From'], "Aucune transaction trouvée pour votre question.")
