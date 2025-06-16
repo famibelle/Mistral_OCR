@@ -21,6 +21,7 @@ import imagehash
 from PIL import Image
 import locale
 import re
+import decimal
 
 # Charger les variables d'environnement à partir du fichier .env
 dotenv.load_dotenv()
@@ -468,7 +469,7 @@ montant_ttc, conditions_paiement, mentions_legales, image_path, created_at
     # 3. Enrichissement temporel
     enriched_q = enrich_question_with_time_context(req.question)
 
-    # 4. Prompt corrigé : demander simplement la colonne `heure`, pas un extract sur `date_vente`
+    # 4. Prompt : on demande explicitement la colonne `heure`
     prompt = f"""{schema}
 Génère uniquement une requête SQL SELECT valide (sans explication),
 en sélectionnant montant_ttc, date_vente, heure, vendeur_nom et description
@@ -487,12 +488,6 @@ pour répondre à :
     )
     sql = llm_resp.choices[0].message.content \
         .strip("```sql").strip("```").strip()
-
-    # En cas de LLM rebelle, forcer la colonne heure depuis le champ `heure`
-    sql = sql.replace(
-        "EXTRACT(HOUR FROM date_vente) AS heure",
-        "EXTRACT(HOUR FROM heure) AS heure"
-    )
 
     logger.info(f"SQL générée par LLM : {sql}")
 
@@ -742,7 +737,7 @@ field_labels = {
 def format_human_readable_response(montant, vendeur, date, heure, description):
     """
     Formate une réponse human readable avec montant, vendeur, date, heure et description.
-    Si l'heure est inconnue, elle est omise.
+    Si l'heure est inconnue, elle est omise. Gère les heures numériques (Decimal/int) et les chaînes.
     """
     # Formatage de la date
     try:
@@ -757,9 +752,16 @@ def format_human_readable_response(montant, vendeur, date, heure, description):
     except Exception:
         montant_str = f"{montant}€"
 
-    # Construction de la réponse
-    if heure and heure != "?":
+    # Formatage de l'heure
+    heure_str = None
+    if isinstance(heure, (int, float, decimal.Decimal)):
+        # heure extraite par EXTRACT(HOUR) est un Decimal
+        heure_str = f"{int(heure)}h"
+    elif isinstance(heure, str) and heure and heure != "?":
         heure_str = heure.replace(":", "h", 1)
+
+    # Construction de la réponse
+    if heure_str:
         response = f"{montant_str} chez {vendeur} le {date_str} à {heure_str}"
     else:
         response = f"{montant_str} chez {vendeur} le {date_str}"
