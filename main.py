@@ -493,9 +493,8 @@ pour répondre à :
         raise HTTPException(400, "Seules les requêtes SELECT sont autorisées.")
 
     # 6. Exécution avec le paramètre vendeur_nom
-    params = {}
-    if vendeur_mention:
-        params["vendeur_nom"] = vendeur_mention
+    # Toujours passer le paramètre vendeur_nom (None si pas mentionné)
+    params = {"vendeur_nom": vendeur_mention or None}
     try:
         with engine.connect() as conn:
             result = conn.execute(text(sql), params)
@@ -505,7 +504,7 @@ pour répondre à :
     except Exception as e:
         logger.error(f"Erreur SQL ({sql}): {e}")
         raise HTTPException(500, "Erreur lors de l'exécution de la requête SQL.")
-
+    
     # 7. Format human readable
     if not rows:
         return {"query": sql, "results": [], "human_readable": "Aucune facture trouvée pour votre question."}
