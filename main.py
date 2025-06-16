@@ -264,14 +264,13 @@ def process_and_respond(phone_number: str, image_bytes: bytes) -> None:
                       AND ABS(EXTRACT(EPOCH FROM (heure::time - :heure::time))/3600) <= 2
                       AND levenshtein(numero_facture, :numero_facture) <= 2
                       AND levenshtein(vendeur_nom, :vendeur_nom) <= 2
-                """),
-                {
-                    "date_vente": facture_data.get('date_vente'),
-                    "heure": facture_data.get('heure'),
-                    "montant_ht": facture_data.get('montant_ht'),
-                    "numero_facture": facture_data.get('numero_facture'),
-                    "vendeur_nom": facture_data.get('vendeur_nom'),
-                }
+                """).bindparams(
+                    date_vente=facture_data.get('date_vente'),
+                    heure=facture_data.get('heure'),
+                    montant_ht=facture_data.get('montant_ht'),
+                    numero_facture=facture_data.get('numero_facture'),
+                    vendeur_nom=facture_data.get('vendeur_nom'),
+                )
             )
             matches = result.fetchall()
             cols = result.keys()
@@ -528,14 +527,13 @@ def check_and_update_database(data: dict) -> list:
                   AND ABS(EXTRACT(EPOCH FROM (heure::time - :heure::time))/3600) <= 2
                   AND levenshtein(numero_facture, :numero_facture) <= 2
                   AND levenshtein(vendeur_nom, :vendeur_nom) <= 2
-            """),
-            {
-                "date_vente": data.get('date_vente'),
-                "heure": data.get('heure'),
-                "montant_ht": data.get('montant_ht'),
-                "numero_facture": data.get('numero_facture'),
-                "vendeur_nom": data.get('vendeur_nom'),
-            }
+            """).bindparams(
+                date_vente=data.get('date_vente'),
+                heure=data.get('heure'),
+                montant_ht=data.get('montant_ht'),
+                numero_facture=data.get('numero_facture'),
+                vendeur_nom=data.get('vendeur_nom'),
+            )
         )
         existing = result.fetchone()
         cols = result.keys()
