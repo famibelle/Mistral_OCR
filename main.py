@@ -475,9 +475,9 @@ en sélectionnant montant_ttc, date_vente, heure, vendeur_nom et description,
 pour répondre à :
 "{enriched_q}"
 
-— Le filtre sur le vendeur doit être flou : 
+— Si un vendeur est mentionné, ajoute un filtre flou :
   WHERE levenshtein(lower(vendeur_nom), lower(:vendeur_nom)) <= 2
-— Passe :vendeur_nom en paramètre.
+— Sinon, n'ajoute pas de filtre sur le vendeur.
 """
     llm_resp = mistral_client.chat.complete(
         model="mistral-large-latest",
@@ -493,7 +493,9 @@ pour répondre à :
         raise HTTPException(400, "Seules les requêtes SELECT sont autorisées.")
 
     # 6. Exécution avec le paramètre vendeur_nom
-    params = {"vendeur_nom": vendeur_mention or ""}
+    params = {}
+    if vendeur_mention:
+        params["vendeur_nom"] = vendeur_mention
     try:
         with engine.connect() as conn:
             result = conn.execute(text(sql), params)
