@@ -433,6 +433,7 @@ async def query_factures(req: QueryRequest):
     Endpoint de requêtes en langage naturel.
     Transforme la question en SQL (via un modèle texte) puis exécute
     strictement ce SQL SELECT sur la base PostgreSQL.
+    Retourne une réponse plus lisible pour un humain.
     """
     # 1. Décrire le schéma à passer au LLM
     schema = """
@@ -477,10 +478,53 @@ montant_ttc, conditions_paiement, mentions_legales, image_path, created_at
         logger.error(f"Erreur SQL ({sql}): {e}")
         raise HTTPException(500, "Erreur lors de l'exécution de la requête SQL.")
 
-    # 6. Retour JSON
-    results = [dict(zip(cols, row)) for row in rows]
-    return {"query": sql, "results": results}
+    # 6. Formatage human readable
+    if not rows:
+        return {"query": sql, "results": [], "human_readable": "Aucune facture trouvée pour votre question."}
 
+    # Mapping pour affichage lisible
+    field_labels = {
+        "numero_facture": "Numéro de facture",
+        "date_emission": "Date d'émission",
+        "vendeur_nom": "Vendeur",
+        "vendeur_adresse": "Adresse du vendeur",
+        "vendeur_siret": "SIRET vendeur",
+        "vendeur_tva": "TVA vendeur",
+        "client_nom": "Client",
+        "client_adresse": "Adresse du client",
+        "description": "Description",
+        "date_vente": "Date de vente",
+        "heure": "Heure",
+        "prix_unitaire_ht": "Prix unitaire HT",
+        "quantite": "Quantité",
+        "taux_tva": "Taux TVA",
+        "montant_ht": "Montant HT",
+        "montant_tva": "Montant TVA",
+        "montant_ttc": "Montant TTC",
+        "conditions_paiement": "Conditions de paiement",
+        "mentions_legales": "Mentions légales",
+        "devise": "Devise",
+    }
+
+    readable_lines = []
+    for row in rows:
+        parts = []
+        for idx, col in enumerate(cols):
+            if col in ("image_path", "created_at"):
+                continue
+            label = field_labels.get(col, col)
+            value = row[idx]
+            if value is not None and value != "":
+                parts.append(f"{label}: {value}")
+        readable_lines.append(" | ".join(parts))
+
+    human_readable = "\n".join(f"- {line}" for line in readable_lines)
+
+    return {
+        "query": sql,
+        "results": [dict(zip(cols, row)) for row in rows],
+        "human_readable": human_readable
+    }
 def check_and_update_database(data: dict) -> list:
     """
     Insère ou met à jour une facture dans la base PostgreSQL selon le quadruplet
