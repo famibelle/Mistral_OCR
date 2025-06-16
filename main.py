@@ -457,8 +457,9 @@ montant_ttc, conditions_paiement, mentions_legales, image_path, created_at
     prompt = (
         f"{schema}\n"
         "Génère uniquement une requête SQL SELECT valide (sans explication), "
-        "en sélectionnant, sauf mention contraire, les colonnes montant_ttc, date_vente, heure et description, "
-        "pour répondre à :\n"
+        "en sélectionnant, sauf mention contraire, les colonnes montant_ttc, date_vente, heure, vendeur_nom et description. "
+        "Pour les champs vendeur_nom et description, utilise la fonction levenshtein pour permettre une recherche floue si la question contient un nom de vendeur ou une description. "
+        "Réponds à :\n"
         f"\"{enriched_question}\""
     )
     llm_resp = mistral_client.chat.complete(
