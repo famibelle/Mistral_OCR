@@ -249,7 +249,7 @@ def process_incoming_message(data: dict, background_tasks: BackgroundTasks) -> N
 
                             line = f"{montant_str} chez {vendeur} le {date_str} à {heure_str}"
                             if description:
-                                line += f"\n{description}"
+                                line += f"\n🛒 Description : {description}"
                             lines.append(line)
                         response_text = "Voici les résultats trouvés :\n\n" + "\n\n".join(lines)
                         send_whatsapp_message(data['From'], response_text)
