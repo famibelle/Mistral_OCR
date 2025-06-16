@@ -688,6 +688,29 @@ def compute_perceptual_hash_from_bytes(image_bytes: bytes) -> str:
         logger.error(f"Erreur lors du calcul du perceptual hash: {e}")
         return "nohash"
 
+field_labels = {
+    "numero_facture": "Numéro de facture",
+    "date_emission": "Date d'émission",
+    "vendeur_nom": "Vendeur",
+    "vendeur_adresse": "Adresse du vendeur",
+    "vendeur_siret": "SIRET vendeur",
+    "vendeur_tva": "TVA vendeur",
+    "client_nom": "Client",
+    "client_adresse": "Adresse du client",
+    "description": "Description",
+    "date_vente": "Date de vente",
+    "heure": "Heure",
+    "prix_unitaire_ht": "Prix unitaire HT",
+    "quantite": "Quantité",
+    "taux_tva": "Taux TVA",
+    "montant_ht": "Montant HT",
+    "montant_tva": "Montant TVA",
+    "montant_ttc": "Montant TTC",
+    "conditions_paiement": "Conditions de paiement",
+    "mentions_legales": "Mentions légales",
+    "devise": "Devise",
+}
+
 if __name__ == "__main__":
     uvicorn.run(
         app,
