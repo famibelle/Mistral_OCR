@@ -499,6 +499,7 @@ pour répondre à :
             result = conn.execute(text(sql), params)
             rows = result.fetchall()
             cols = result.keys()
+            logger.info(f"Résultat de la requête SQL : {rows}")
     except Exception as e:
         logger.error(f"Erreur SQL ({sql}): {e}")
         raise HTTPException(500, "Erreur lors de l'exécution de la requête SQL.")
