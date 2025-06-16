@@ -517,6 +517,7 @@ def check_and_update_database(data: dict) -> list:
             UNIQUE(date_vente, heure, montant_ht, numero_facture)
             )
         '''))
+        conn.execute(text("CREATE EXTENSION IF NOT EXISTS fuzzystrmatch;"))
 
         # Recherche d'une facture existante avec similarité sur numero_facture, vendeur_nom,
         # tolérance sur montant_ht (±0,10 €) et heure (écart ≤ 2h)
