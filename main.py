@@ -468,10 +468,10 @@ montant_ttc, conditions_paiement, mentions_legales, image_path, created_at
     # 3. Enrichissement temporel
     enriched_q = enrich_question_with_time_context(req.question)
 
-    # 4. Prompt : on demande une clause WHERE floue sur vendeur_nom
+    # 4. Prompt corrigé : demander simplement la colonne `heure`, pas un extract sur `date_vente`
     prompt = f"""{schema}
-Génère uniquement une requête SQL SELECT valide (sans explication), 
-en sélectionnant montant_ttc, date_vente, heure, vendeur_nom et description,
+Génère uniquement une requête SQL SELECT valide (sans explication),
+en sélectionnant montant_ttc, date_vente, heure, vendeur_nom et description
 pour répondre à :
 "{enriched_q}"
 
@@ -481,11 +481,19 @@ pour répondre à :
 """
     llm_resp = mistral_client.chat.complete(
         model="mistral-large-latest",
-        messages=[{"role":"user","content":prompt}],
-        response_format={"type":"text"},
+        messages=[{"role": "user", "content": prompt}],
+        response_format={"type": "text"},
         temperature=0
     )
-    sql = llm_resp.choices[0].message.content.strip("```sql").strip("```").strip()
+    sql = llm_resp.choices[0].message.content \
+        .strip("```sql").strip("```").strip()
+
+    # En cas de LLM rebelle, forcer la colonne heure depuis le champ `heure`
+    sql = sql.replace(
+        "EXTRACT(HOUR FROM date_vente) AS heure",
+        "EXTRACT(HOUR FROM heure) AS heure"
+    )
+
     logger.info(f"SQL générée par LLM : {sql}")
 
     # 5. Sécurité
