@@ -218,12 +218,14 @@ def process_incoming_message(data: dict, background_tasks: BackgroundTasks) -> N
                     elif result["results"]:
                         # Limite à 5 résultats pour WhatsApp
                         lines = []
+                        from datetime import time as dttime
+
                         for row in result["results"][:5]:
                             montant = row.get("montant_ttc") or row.get("montant_ht") or "?"
 
                             vendeur = row.get("vendeur_nom") or "?"
                             date = row.get("date_vente") or "?"
-                            heure = row.get("heure") or "?"
+                            heure = row.get("heure") or None
                             description = row.get("description") or ""
 
                             try:
@@ -232,7 +234,13 @@ def process_incoming_message(data: dict, background_tasks: BackgroundTasks) -> N
                             except Exception:
                                 date_str = date
 
-                            heure_str = heure if not heure or heure == "?" else heure.replace(":", "h", 1)
+                            if isinstance(heure, dttime):
+                                # format TIME en "HHhMM"
+                                heure_str = heure.strftime("%Hh%M")
+                            elif isinstance(heure, str) and heure and heure != "?":
+                                heure_str = heure.replace(":", "h", 1)
+                            else:
+                                heure_str = "?"  # ou laisser vide si vous préférez
 
                             try:
                                 montant_str = f"{float(montant):.2f}€"
