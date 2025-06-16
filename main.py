@@ -471,7 +471,7 @@ def check_and_update_database(data: dict) -> list:
             heure TIME,
             prix_unitaire_ht NUMERIC(12, 2),
             quantite INTEGER,
-            taux_tva TEXT,
+            taux_tva NUMERIC(5, 2),
             montant_ht NUMERIC(12, 2),
             montant_tva NUMERIC(12, 2),
             montant_ttc NUMERIC(12, 2),
