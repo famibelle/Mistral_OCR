@@ -483,17 +483,22 @@ def check_and_update_database(data: dict) -> list:
             )
         '''))
 
-        # Recherche d'une facture existante sur le quadruplet
+        # Recherche d'une facture existante sur le quadruplet (avec similarité sur numero_facture ET vendeur_nom)
         result = conn.execute(
             text("""
                 SELECT * FROM Factures
-                WHERE date_vente = :date_vente AND heure = :heure AND montant_ht = :montant_ht AND numero_facture = :numero_facture
+                WHERE date_vente = :date_vente
+                  AND heure = :heure
+                  AND montant_ht = :montant_ht
+                  AND levenshtein(numero_facture, :numero_facture) <= 2
+                  AND levenshtein(vendeur_nom, :vendeur_nom) <= 2
             """),
             {
                 "date_vente": data.get('date_vente'),
                 "heure": data.get('heure'),
                 "montant_ht": data.get('montant_ht'),
                 "numero_facture": data.get('numero_facture'),
+                "vendeur_nom": data.get('vendeur_nom'),
             }
         )
         existing = result.fetchone()
