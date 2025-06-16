@@ -489,7 +489,14 @@ pour répondre à :
     sql = llm_resp.choices[0].message.content \
         .strip("```sql").strip("```").strip()
 
-    logger.info(f"SQL générée par LLM : {sql}")
+    # Correction simple : ne plus extraire l’heure de la DATE, mais utiliser la colonne TIME `heure`
+    sql = re.sub(
+        r"EXTRACT\s*\(\s*HOUR\s+FROM\s+date_vente\s*\)\s+AS\s+heure",
+        "heure",
+        sql,
+        flags=re.IGNORECASE
+    )
+    logger.info(f"SQL corrigée : {sql}")
 
     # 5. Sécurité
     if not sql.lower().startswith("select"):
