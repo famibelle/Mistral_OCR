@@ -253,6 +253,51 @@ def process_and_respond(phone_number: str, image_bytes: bytes) -> None:
         send_whatsapp_message(phone_number, "Merci pour votre envoi ! Je m'en occupe... ⏳")
         facture_data = process_image(image_bytes)
         logger.info(f"Données extraites: {facture_data}")
+
+        # Recherche toutes les factures similaires (pas seulement la première)
+        with engine.connect() as conn:
+            result = conn.execute(
+                text("""
+                    SELECT * FROM Factures
+                    WHERE date_vente = :date_vente
+                      AND ABS(montant_ht - :montant_ht) <= 0.10
+                      AND ABS(EXTRACT(EPOCH FROM (heure::time - :heure::time))/3600) <= 2
+                      AND levenshtein(numero_facture, :numero_facture) <= 2
+                      AND levenshtein(vendeur_nom, :vendeur_nom) <= 2
+                """),
+                {
+                    "date_vente": facture_data.get('date_vente'),
+                    "heure": facture_data.get('heure'),
+                    "montant_ht": facture_data.get('montant_ht'),
+                    "numero_facture": facture_data.get('numero_facture'),
+                    "vendeur_nom": facture_data.get('vendeur_nom'),
+                }
+            )
+            matches = result.fetchall()
+            cols = result.keys()
+
+        if len(matches) > 1:
+            # Plusieurs correspondances trouvées : proposer la liste à l'utilisateur
+            send_whatsapp_message(
+                phone_number,
+                "Plusieurs factures similaires ont été trouvées dans la base. Voici la liste :"
+            )
+            for row in matches[:5]:  # Limite à 5 pour WhatsApp
+                resume = ", ".join(
+                    f"{col}: {row[idx]}"
+                    for idx, col in enumerate(cols)
+                    if col in ("numero_facture", "vendeur_nom", "date_vente", "heure", "montant_ht")
+                )
+                send_whatsapp_message(phone_number, f"- {resume}")
+            if len(matches) > 5:
+                send_whatsapp_message(phone_number, f"...et {len(matches)-5} autres résultats.")
+            send_whatsapp_message(
+                phone_number,
+                "Merci de préciser la facture concernée ou d'envoyer une image plus lisible."
+            )
+            return
+
+        # Sinon, comportement normal
         updated_fields = check_and_update_database(facture_data)
         logger.info("Base de données mise à jour")
 
@@ -363,13 +408,31 @@ async def health_check():
     """Endpoint pour vérifier l'état de l'application."""
     return {"status": "healthy"}
 
+def enrich_question_with_time_context(question: str) -> str:
+    """
+    Ajoute un contexte temporel à la question si aucune période spécifique n'est mentionnée.
+    """
+    now = datetime.now()
+    current_year = now.year
+    current_month = now.month
+    current_week = now.isocalendar()[1]
+    current_day = now.day
+    current_hour = now.hour
+
+    # Si la question ne contient pas de date explicite, ajoute le contexte temporel
+    if not any(keyword in question.lower() for keyword in ["année", "mois", "semaine", "jour", "heure", "date"]):
+        question += (
+            f" pour l'année {current_year}, le mois {current_month}, "
+            f"la semaine {current_week}, le jour {current_day}, et l'heure {current_hour}."
+        )
+    return question
+
 @app.post("/query/")
 async def query_factures(req: QueryRequest):
     """
     Endpoint de requêtes en langage naturel.
     Transforme la question en SQL (via un modèle texte) puis exécute
-    strictement ce SQL SELECT sur la base SQLite 'factures.db'.
-    Aucun traitement d'image n'est effectué ici.
+    strictement ce SQL SELECT sur la base PostgreSQL.
     """
     # 1. Décrire le schéma à passer au LLM
     schema = """
@@ -379,15 +442,18 @@ vendeur_siret, vendeur_tva, client_nom, client_adresse, description,
 date_vente, prix_unitaire_ht, quantite, taux_tva, montant_ht, montant_tva,
 montant_ttc, conditions_paiement, mentions_legales, image_path, created_at
 """
+
+    # 2. Enrichir la question avec le contexte temporel si nécessaire
+    enriched_question = enrich_question_with_time_context(req.question)
+
+    # 3. Génération du SQL avec un modèle texte
     prompt = (
         f"{schema}\n"
         "Génère uniquement une requête SQL SELECT valide (sans explication), "
         "en sélectionnant, sauf mention contraire, les colonnes montant_ttc, date_vente, heure et description, "
         "pour répondre à :\n"
-        f"\"{req.question}\""
+        f"\"{enriched_question}\""
     )
-
-    # 2. Génération du SQL avec un modèle texte
     llm_resp = mistral_client.chat.complete(
         model="mistral-large-latest",               # modèle texte
         messages=[{"role": "user", "content": prompt}],
@@ -397,11 +463,11 @@ montant_ttc, conditions_paiement, mentions_legales, image_path, created_at
     sql = llm_resp.choices[0].message.content.strip("```sql").strip("```").strip()
     logger.info(f"SQL générée par LLM : {sql}")
 
-    # 3. Sécurité : n’autoriser que des SELECT
+    # 4. Sécurité : n’autoriser que des SELECT
     if not sql.lower().startswith("select"):
         raise HTTPException(400, "Seules les requêtes SELECT sont autorisées.")
 
-    # 4. Exécution sur la base factures.db
+    # 5. Exécution sur la base PostgreSQL
     try:
         with engine.connect() as conn:
             result = conn.execute(text(sql))
@@ -411,39 +477,8 @@ montant_ttc, conditions_paiement, mentions_legales, image_path, created_at
         logger.error(f"Erreur SQL ({sql}): {e}")
         raise HTTPException(500, "Erreur lors de l'exécution de la requête SQL.")
 
-    # 5. Retour JSON
+    # 6. Retour JSON
     results = [dict(zip(cols, row)) for row in rows]
-    # Log des résultats
-    if not results:
-        logger.info("Aucun résultat trouvé pour la requête SQL.")
-    else:
-        # Formatage human readable des résultats
-        readable_results = []
-        for row in results:
-            parts = []
-            if "date_vente" in row and row["date_vente"]:
-                parts.append(f"Date: {row['date_vente']}")
-            if "heure" in row and row["heure"]:
-                parts.append(f"Heure: {row['heure']}")
-            if "montant_ttc" in row and row["montant_ttc"] is not None:
-                parts.append(f"Montant TTC: {row['montant_ttc']} €")
-            if "description" in row and row["description"]:
-                parts.append(f"Détails: {row['description']}")
-            # Ajoute d'autres champs utiles si besoin
-            readable_results.append(" | ".join(parts))
-        logger.info(f"Résultats de la requête (lisibles): {readable_results}")
-
-    # Si trop de colonnes (ex : SELECT *), demander une clarification
-    if len(cols) > 6:  # seuil à ajuster selon ton besoin
-        return {
-            "query": sql,
-            "results": [],
-            "clarification": (
-                "Votre question est trop large et retourne trop d'informations. "
-                "Pouvez-vous préciser les champs ou le type de transaction que vous souhaitez obtenir ?"
-            )
-        }
-
     return {"query": sql, "results": results}
 
 def check_and_update_database(data: dict) -> list:
@@ -483,13 +518,14 @@ def check_and_update_database(data: dict) -> list:
             )
         '''))
 
-        # Recherche d'une facture existante sur le quadruplet (avec similarité sur numero_facture ET vendeur_nom)
+        # Recherche d'une facture existante avec similarité sur numero_facture, vendeur_nom,
+        # tolérance sur montant_ht (±0,10 €) et heure (écart ≤ 2h)
         result = conn.execute(
             text("""
                 SELECT * FROM Factures
                 WHERE date_vente = :date_vente
-                  AND heure = :heure
-                  AND montant_ht = :montant_ht
+                  AND ABS(montant_ht - :montant_ht) <= 0.10
+                  AND ABS(EXTRACT(EPOCH FROM (heure::time - :heure::time))/3600) <= 2
                   AND levenshtein(numero_facture, :numero_facture) <= 2
                   AND levenshtein(vendeur_nom, :vendeur_nom) <= 2
             """),
