@@ -217,9 +217,15 @@ def process_incoming_message(data: dict, background_tasks: BackgroundTasks) -> N
                         # Limite à 5 résultats pour WhatsApp
                         lines = []
                         for row in result["results"][:5]:
-                            resume = ", ".join(f"{k}: {v}" for k, v in row.items() if k not in ("image_path", "created_at"))
-                            lines.append(f"- {resume}")
-                        response_text = "Voici les résultats trouvés :\n" + "\n".join(lines)
+                            parts = []
+                            for k, v in row.items():
+                                if k in ("image_path", "created_at"):
+                                    continue
+                                label = field_labels.get(k, k)
+                                if v is not None and v != "":
+                                    parts.append(f"{label}: {v}")
+                            lines.append(" | ".join(parts))
+                        response_text = "Voici les résultats trouvés :\n" + "\n".join(f"- {line}" for line in lines)
                         if len(result["results"]) > 5:
                             response_text += f"\n...et {len(result['results'])-5} autres résultat(s)."
                         send_whatsapp_message(data['From'], response_text)
