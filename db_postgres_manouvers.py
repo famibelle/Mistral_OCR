@@ -78,9 +78,60 @@ def drop_factures_table():
     except Exception as e:
         print(f"Erreur lors de la suppression de la table : {e}")
 
+def enable_fuzzystrmatch():
+    """
+    Vérifie si l'extension fuzzystrmatch est active ; si non, l'active.
+    Affiche explicitement toute erreur rencontrée.
+    """
+    DATABASE_URL = os.getenv("DATABASE_URL")
+    if not DATABASE_URL:
+        print("Veuillez définir la variable d'environnement DATABASE_URL.")
+        return
+
+    engine = create_engine(DATABASE_URL)
+    try:
+        with engine.connect() as conn:
+            row = conn.execute(text("""
+                SELECT extname
+                  FROM pg_extension
+                 WHERE extname = 'fuzzystrmatch'
+            """)).fetchone()
+            if row:
+                print("L'extension fuzzystrmatch est déjà activée.")
+            else:
+                try:
+                    conn.execute(text("CREATE EXTENSION fuzzystrmatch;"))
+                    print("Extension fuzzystrmatch activée avec succès.")
+                except Exception as e:
+                    print(f"Erreur lors de la création de l'extension fuzzystrmatch : {e}")
+    except Exception as e:
+        print(f"Erreur lors de la vérification de fuzzystrmatch : {e}")
+
+def check_fuzzystrmatch():
+    """
+    Vérifie si l'extension fuzzystrmatch est activée.
+    """
+    DATABASE_URL = os.getenv("DATABASE_URL")
+    if not DATABASE_URL:
+        print("Veuillez définir la variable d'environnement DATABASE_URL.")
+        return
+
+    engine = create_engine(DATABASE_URL)
+    with engine.connect() as conn:
+        result = conn.execute(text("""
+            SELECT extname, extversion
+            FROM pg_extension
+            WHERE extname = 'fuzzystrmatch'
+        """))
+        row = result.fetchone()
+        if row:
+            print(f"fuzzystrmatch est activée (version {row[1]}).")
+        else:
+            print("fuzzystrmatch n'est pas activée.")
+
 if __name__ == "__main__":
     if len(sys.argv) < 2:
-        print("Usage: python db_postgres_manouvers.py [show|alter|structure|drop]")
+        print("Usage: python db_postgres_manouvers.py [show|alter|structure|drop|fuzzystrmatch]")
     elif sys.argv[1] == "show":
         show_readable_db()
     elif sys.argv[1] == "alter":
@@ -89,5 +140,9 @@ if __name__ == "__main__":
         show_table_structure()
     elif sys.argv[1] == "drop":
         drop_factures_table()
+    elif sys.argv[1] == "fuzzystrmatch":
+        enable_fuzzystrmatch()
+    elif sys.argv[1] == "check_fuzzystrmatch":
+        check_fuzzystrmatch()
     else:
-        print("Argument inconnu. Utilisez 'show', 'alter', 'structure' ou 'drop'.")
+        print("Argument inconnu. Utilisez 'show', 'alter', 'structure', 'drop' ou 'fuzzystrmatch'.")
