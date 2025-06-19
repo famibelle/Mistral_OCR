@@ -441,156 +441,93 @@ async def health_check():
 
 @app.post("/query/")
 async def query_factures(req: QueryRequest):
-    # 1. On extrait, si présent, le nom du vendeur dans la question
-    vendeur_mention = None
-    m = re.search(r"chez\s+([^\d,?.!]+)", req.question, re.IGNORECASE)
-    if m:
-        vendeur_mention = m.group(1).strip()
+    """
+    Recherche les factures en fonction de la question de l'utilisateur.
+    Implémente la méthode :
+      1. Récupérer tous les vendeurs de la base
+      2. Extraire le vendeur mentionné dans la question
+      3. Trouver les vendeurs en base qui correspondent le mieux
+      4. Construire et exécuter la requête SQL
+    """
+    # 1. on extrait la liste de tous les vendeurs
+    with engine.connect() as conn:
+        vendors_rs = conn.execute(text("SELECT DISTINCT vendeur_nom FROM Factures"))
+        all_vendors = [row[0] for row in vendors_rs.fetchall()]
+    logger.info(f"Vendeurs en base : {all_vendors}")
 
-    # 2. Schéma pour le LLM
-    schema = """
-Table Factures (PostgreSQL) :
-facture_id, numero_facture, date_emission, vendeur_nom, vendeur_adresse,
-vendeur_siret, vendeur_tva, client_nom, client_adresse, description,
-date_vente, prix_unitaire_ht, quantite, taux_tva, montant_ht, montant_tva,
-montant_ttc, conditions_paiement, mentions_legales, image_path, created_at
+    # 2. on déduit le vendeur mentionné par l'utilisateur
+    extract_prompt = f"""
+Voici la question : "{req.question}"
+Extrais uniquement le nom du vendeur s'il est mentionné,
+ou retourne "AUCUN" si aucun vendeur n'est dans la question.
 """
-    description_table ="""
-Voici la description des champs de la table
-"numero_facture": "Numéro de facture",
-"date_emission": "Date d'émission",
-"vendeur_nom": "Vendeur",
-"vendeur_adresse": "Adresse du vendeur",
-"vendeur_siret": "SIRET vendeur",
-"vendeur_tva": "TVA vendeur",
-"client_nom": "Client",
-"client_adresse": "Adresse du client",
-"description": "Description",
-"date_vente": "Date de vente",
-"heure": "Heure",
-"prix_unitaire_ht": "Prix unitaire HT",
-"quantite": "Quantité",
-"taux_tva": "Taux TVA",
-"montant_ht": "Montant HT",
-"montant_tva": "Montant TVA",
-"montant_ttc": "Montant TTC",
-"conditions_paiement": "Conditions de paiement",
-"mentions_legales": "Mentions légales",
-"devise": "Devise"
-"""
-
-    # 3. Enrichissement temporel
-    now = datetime.now()
-    current_year = now.year
-    current_month = now.month
-    current_week = now.isocalendar()[1]
-    current_day = now.day
-    current_hour = now.hour
-
-    question = req.question
-
-    # Si la question ne contient pas de date explicite, ajoute le contexte temporel
-    if not any(keyword in question.lower() for keyword in ["année", "mois", "semaine", "jour", "heure", "date"]):
-        question = f"""
-Aujourd'hui nous sommes le {current_day}, {current_month} {current_year} et il est {current_hour}. 
-Voici la question : {req.question}
-"""
-       
-    
-    # 4. Prompt : on demande explicitement la colonne `heure`
-    prompt = f"""
-{description_table}
-{schema}
-Génère uniquement une requête SQL SELECT valide (sans explication),
-en sélectionnant montant_ttc, date_vente, heure, vendeur_nom et description
-pour répondre à :
-"{question}"
-
-— Si un nom de vendeur est mentionné, ajoute un filtre flou :
-  WHERE levenshtein(lower(vendeur_nom), lower(:vendeur_nom)) <= 2
-— Sinon, n'ajoute pas de filtre sur le vendeur.
-"""
-    llm_resp = mistral_client.chat.complete(
-        model="mistral-large-latest",
-        messages=[{"role": "user", "content": prompt}],
-        response_format={"type": "text"},
+    extract_resp = mistral_client.chat.complete(
+        model="mistral-small-latest",
+        messages=[{"role":"user","content":extract_prompt}],
+        response_format={"type":"text"},
         temperature=0
     )
-    sql = llm_resp.choices[0].message.content \
-        .strip("```sql").strip("```").strip()
+    user_vendor = extract_resp.choices[0].message.content.strip()
+    if user_vendor.upper() == "AUCUN":
+        user_vendor = None
 
-    # Correction simple : ne plus extraire l’heure de la DATE, mais utiliser la colonne TIME `heure`
-    sql = re.sub(
-        r"EXTRACT\s*\(\s*HOUR\s+FROM\s+date_vente\s*\)\s+AS\s+heure",
-        "heure",
-        sql,
-        flags=re.IGNORECASE
-    )
-    logger.info(f"SQL corrigée : {sql}")
+    # 3. on liste les vendeurs de la base qui correspondent le mieux
+    matched_vendors = []
+    if user_vendor:
+        match_prompt = f"""
+Liste parmi les vendeurs suivants ceux qui correspondent le mieux à "{user_vendor}" :
+{', '.join(all_vendors)}
+Retourne une liste de noms séparés par des virgules.
+"""
+        match_resp = mistral_client.chat.complete(
+            model="mistral-small-latest",
+            messages=[{"role":"user","content":match_prompt}],
+            response_format={"type":"text"},
+            temperature=0
+        )
+        matched_vendors = [v.strip() for v in match_resp.choices[0].message.content.split(",") if v.strip()]
+    logger.info(f"Vendeurs correspondants : {matched_vendors}")
 
-    # 5. Sécurité
-    if not sql.lower().startswith("select"):
-        raise HTTPException(400, "Seules les requêtes SELECT sont autorisées.")
+    # 4. on construit et exécute la requête SQL
+    sql = """
+SELECT montant_ttc, date_vente, heure, vendeur_nom, description
+FROM Factures
+WHERE 1=1
+"""
+    params: dict = {}
+    if matched_vendors:
+        sql += "  AND vendeur_nom IN :vendors\n"
+        params["vendors"] = tuple(matched_vendors)
 
-    # 6. Exécution avec le paramètre vendeur_nom
-    # Toujours passer le paramètre vendeur_nom (None si pas mentionné)
-    params = {"vendeur_nom": vendeur_mention or None}
+    # (optionnel) filtrage temporel ou autres clauses via LLM...
+    # ...existing code pour enrichissement avec date/contexte si besoin...
+
     try:
         with engine.connect() as conn:
             result = conn.execute(text(sql), params)
             rows = result.fetchall()
             cols = result.keys()
-            logger.info(f"Résultat de la requête SQL : {rows}")
+            logger.info(f"Résultats SQL : {rows}")
     except Exception as e:
         logger.error(f"Erreur SQL ({sql}): {e}")
         raise HTTPException(500, "Erreur lors de l'exécution de la requête SQL.")
-    
-    # 7. Format human readable
+
+    # format human readable
     if not rows:
-        return {"query": sql, "results": [], "human_readable": "Aucune facture trouvée pour votre question."}
+        return {"query": sql, "results": [], "human_readable": "Aucune facture trouvée."}
 
-    # Mapping pour affichage lisible
-    field_labels = {
-        "numero_facture": "Numéro de facture",
-        "date_emission": "Date d'émission",
-        "vendeur_nom": "Vendeur",
-        "vendeur_adresse": "Adresse du vendeur",
-        "vendeur_siret": "SIRET vendeur",
-        "vendeur_tva": "TVA vendeur",
-        "client_nom": "Client",
-        "client_adresse": "Adresse du client",
-        "description": "Description",
-        "date_vente": "Date de vente",
-        "heure": "Heure",
-        "prix_unitaire_ht": "Prix unitaire HT",
-        "quantite": "Quantité",
-        "taux_tva": "Taux TVA",
-        "montant_ht": "Montant HT",
-        "montant_tva": "Montant TVA",
-        "montant_ttc": "Montant TTC",
-        "conditions_paiement": "Conditions de paiement",
-        "mentions_legales": "Mentions légales",
-        "devise": "Devise",
-    }
-
-    readable_lines = []
+    readable = []
     for row in rows:
-        parts = []
-        for idx, col in enumerate(cols):
-            if col in ("image_path", "created_at"):
-                continue
-            label = field_labels.get(col, col)
-            value = row[idx]
-            if value is not None and value != "":
-                parts.append(f"{label}: {value}")
-        readable_lines.append(" | ".join(parts))
-
-    human_readable = "\n".join(f"- {line}" for line in readable_lines)
-
+        label_values = [
+            f"{field_labels.get(col, col)}: {row[idx]}"
+            for idx, col in enumerate(cols)
+            if row[idx] not in (None, "")
+        ]
+        readable.append(" | ".join(label_values))
     return {
         "query": sql,
-        "results": [dict(zip(cols, row)) for row in rows],
-        "human_readable": human_readable
+        "results": [dict(zip(cols, r)) for r in rows],
+        "human_readable": "\n".join(f"- {l}" for l in readable)
     }
 def check_and_update_database(data: dict) -> list:
     """
