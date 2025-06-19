@@ -449,6 +449,73 @@ async def query_factures(req: QueryRequest):
       3. Trouver les vendeurs en base qui correspondent le mieux
       4. Construire et exécuter la requête SQL
     """
+    # 0. Définir le schéma pour le LLM
+    schema = """
+Table Factures (PostgreSQL) :
+facture_id, numero_facture, date_emission, vendeur_nom, vendeur_adresse,
+vendeur_siret, vendeur_tva, client_nom, client_adresse, description,
+date_vente (DATE), heure (TIME), prix_unitaire_ht, quantite, taux_tva,
+montant_ht, montant_tva, montant_ttc, conditions_paiement, mentions_legales,
+image_path, created_at
+"""
+
+    description_table = """
+voici la description des champs de la table
+"numero_facture": "Numéro de facture",
+"date_emission": "Date d'émission",
+"vendeur_nom": "Vendeur",
+"vendeur_adresse": "Adresse du vendeur",
+"vendeur_siret": "SIRET vendeur",
+"vendeur_tva": "TVA vendeur",
+"client_nom": "Client",
+"client_adresse": "Adresse du client",
+"description": "Description",
+"date_vente": "Date de vente",
+"heure": "Heure",
+"prix_unitaire_ht": "Prix unitaire HT",
+"quantite": "Quantité",
+"taux_tva": "Taux TVA",
+"montant_ht": "Montant HT",
+"montant_tva": "Montant TVA",
+"montant_ttc": "Montant TTC",
+"conditions_paiement": "Conditions de paiement",
+"mentions_legales": "Mentions légales",
+"devise": "Devise",
+
+    """
+
+    # 1. Enrichir la question avec le contexte temporel
+    now = datetime.now()
+    current_time = now.strftime("%H:%M")
+    current_year = now.year
+    current_month = now.month
+    current_week = now.isocalendar()[1]
+    current_day = now.day
+
+    enriched_q = (
+        f"Aujourd'hui il est {current_time}, nous sommes le {current_day} {current_month} {current_year}. "
+        f"Voici la question : {req.question}"
+    )
+
+    # 2. Générer le prompt pour le LLM
+    sql_prompt = f"""
+{description_table}
+
+{schema}
+Génère uniquement une requête SQL SELECT valide (sans explication), 
+en sélectionnant montant_ttc, date_vente, heure, vendeur_nom et description,
+pour répondre à :
+"{enriched_q}"
+"""
+    # 3. Appel à Mistral pour générer la requête SQL
+    llm_resp = mistral_client.chat.complete(
+        model="mistral-large-latest",
+        messages=[{"role": "user", "content": sql_prompt}],
+        response_format={"type": "text"},
+        temperature=0
+    )
+    sql = llm_resp.choices[0].message.content.strip("```sql").strip("```").strip()
+
     # 1. on extrait la liste de tous les vendeurs
     with engine.connect() as conn:
         vendors_rs = conn.execute(text("SELECT DISTINCT vendeur_nom FROM Factures"))
@@ -464,14 +531,22 @@ Si la question mentionne un acteur de la grande distribution (ex : Carrefour, Au
 Sinon, retourne "AUCUN".
 """
     extract_resp = mistral_client.chat.complete(
-        model="mistral-small-latest",
+        model="mistral-large-latest",         # modèle plus costaud
         messages=[{"role":"user","content":extract_prompt}],
         response_format={"type":"text"},
         temperature=0
     )
     user_vendor = extract_resp.choices[0].message.content.strip()
+
+    # Uniformisation
     if user_vendor.upper() == "AUCUN":
         user_vendor = None
+
+    # Fallback fuzzy Python si Mistral échoue
+    import difflib
+    if user_vendor and user_vendor not in all_vendors:
+        matches = difflib.get_close_matches(user_vendor, all_vendors, n=1, cutoff=0.5)
+        user_vendor = matches[0] if matches else user_vendor
 
     logger.info(f"Vendeur mentionné par l'utilisateur : {user_vendor}")
     
