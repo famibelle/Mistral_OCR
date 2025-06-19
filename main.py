@@ -460,6 +460,8 @@ async def query_factures(req: QueryRequest):
 Voici la question : "{req.question}"
 Extrais uniquement le nom du vendeur s'il est mentionné,
 ou retourne "AUCUN" si aucun vendeur n'est dans la question.
+Si la question mentionne un acteur de la grande distribution (ex : Carrefour, Auchan, Leclerc, Intermarché, Casino, Monoprix, Lidl, Aldi, Super U, Cora, Franprix, etc.), retourne ce nom même s'il n'est pas dans la base.
+Sinon, retourne "AUCUN".
 """
     extract_resp = mistral_client.chat.complete(
         model="mistral-small-latest",
@@ -482,7 +484,7 @@ Liste parmi les vendeurs suivants ceux qui correspondent le mieux à "{user_vend
 Retourne une liste de noms séparés par des virgules.
 """
         match_resp = mistral_client.chat.complete(
-            model="mistral-small-latest",
+            model="mistral-large-latest",
             messages=[{"role":"user","content":match_prompt}],
             response_format={"type":"text"},
             temperature=0
