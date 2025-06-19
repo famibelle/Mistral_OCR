@@ -471,6 +471,8 @@ ou retourne "AUCUN" si aucun vendeur n'est dans la question.
     if user_vendor.upper() == "AUCUN":
         user_vendor = None
 
+    logger.info(f"Vendeur mentionné par l'utilisateur : {user_vendor}")
+    
     # 3. on liste les vendeurs de la base qui correspondent le mieux
     matched_vendors = []
     if user_vendor:
