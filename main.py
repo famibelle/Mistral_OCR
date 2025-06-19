@@ -658,7 +658,7 @@ def check_and_update_database(data: dict) -> list:
         cols = result.keys()
 
         if not existing:
-            # Nouvelle facture : INSERT
+            # Nouvelle facture : INSERT sans ON CONFLICT
             conn.execute(
                 text('''
                     INSERT INTO Factures (
@@ -711,11 +711,15 @@ def check_and_update_database(data: dict) -> list:
                 if new_value not in (None, "") and str(new_value) != str(old_value):
                     updated_fields.append(col)
             if updated_fields:
-                update_fields = ", ".join([f"{col}=:{col}" for col in updated_fields])
-                update_sql = f'''
-                    UPDATE Factures SET {update_fields}
-                    WHERE date_vente = :date_vente AND heure = :heure AND montant_ht = :montant_ht AND numero_facture = :numero_facture
-                '''
+                update_fields = ", ".join(f"{col}=:{col}" for col in updated_fields)
+                update_sql = f"""
+                    UPDATE Factures
+                    SET {update_fields}
+                    WHERE date_vente = :date_vente
+                      AND heure = :heure
+                      AND montant_ht = :montant_ht
+                      AND numero_facture = :numero_facture
+                """
                 params = {col: data.get(col) for col in updated_fields}
                 params.update({
                     "date_vente": data.get('date_vente'),
