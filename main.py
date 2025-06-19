@@ -438,24 +438,6 @@ async def health_check():
     """Endpoint pour vérifier l'état de l'application."""
     return {"status": "healthy"}
 
-def enrich_question_with_time_context(question: str) -> str:
-    """
-    Ajoute un contexte temporel à la question si aucune période spécifique n'est mentionnée.
-    """
-    now = datetime.now()
-    current_year = now.year
-    current_month = now.month
-    current_week = now.isocalendar()[1]
-    current_day = now.day
-    current_hour = now.hour
-
-    # Si la question ne contient pas de date explicite, ajoute le contexte temporel
-    if not any(keyword in question.lower() for keyword in ["année", "mois", "semaine", "jour", "heure", "date"]):
-        question += (
-            f" pour l'année {current_year}, le mois {current_month}, "
-            f"la semaine {current_week}, le jour {current_day}, et l'heure {current_hour}."
-        )
-    return question
 
 @app.post("/query/")
 async def query_factures(req: QueryRequest):
@@ -475,14 +457,27 @@ montant_ttc, conditions_paiement, mentions_legales, image_path, created_at
 """
 
     # 3. Enrichissement temporel
-    enriched_q = enrich_question_with_time_context(req.question)
+    now = datetime.now()
+    current_year = now.year
+    current_month = now.month
+    current_week = now.isocalendar()[1]
+    current_day = now.day
+    current_hour = now.hour
 
+    # Si la question ne contient pas de date explicite, ajoute le contexte temporel
+    if not any(keyword in question.lower() for keyword in ["année", "mois", "semaine", "jour", "heure", "date"]):
+        question = f"""
+Aujourd'hui nous sommes le {current_day}, {current_month} {current_year} et il est {current_hour}. 
+Voici la question : {question}
+"""
+       
+    
     # 4. Prompt : on demande explicitement la colonne `heure`
     prompt = f"""{schema}
 Génère uniquement une requête SQL SELECT valide (sans explication),
 en sélectionnant montant_ttc, date_vente, heure, vendeur_nom et description
 pour répondre à :
-"{enriched_q}"
+"{question}"
 
 — Si un vendeur est mentionné, ajoute un filtre flou :
   WHERE levenshtein(lower(vendeur_nom), lower(:vendeur_nom)) <= 2
