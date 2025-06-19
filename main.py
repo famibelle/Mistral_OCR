@@ -455,6 +455,29 @@ vendeur_siret, vendeur_tva, client_nom, client_adresse, description,
 date_vente, prix_unitaire_ht, quantite, taux_tva, montant_ht, montant_tva,
 montant_ttc, conditions_paiement, mentions_legales, image_path, created_at
 """
+    description_table ="""
+Voici la description des champs de la table
+"numero_facture": "Numéro de facture",
+"date_emission": "Date d'émission",
+"vendeur_nom": "Vendeur",
+"vendeur_adresse": "Adresse du vendeur",
+"vendeur_siret": "SIRET vendeur",
+"vendeur_tva": "TVA vendeur",
+"client_nom": "Client",
+"client_adresse": "Adresse du client",
+"description": "Description",
+"date_vente": "Date de vente",
+"heure": "Heure",
+"prix_unitaire_ht": "Prix unitaire HT",
+"quantite": "Quantité",
+"taux_tva": "Taux TVA",
+"montant_ht": "Montant HT",
+"montant_tva": "Montant TVA",
+"montant_ttc": "Montant TTC",
+"conditions_paiement": "Conditions de paiement",
+"mentions_legales": "Mentions légales",
+"devise": "Devise"
+"""
 
     # 3. Enrichissement temporel
     now = datetime.now()
@@ -475,13 +498,15 @@ Voici la question : {req.question}
        
     
     # 4. Prompt : on demande explicitement la colonne `heure`
-    prompt = f"""{schema}
+    prompt = f"""
+{description_table}
+{schema}
 Génère uniquement une requête SQL SELECT valide (sans explication),
 en sélectionnant montant_ttc, date_vente, heure, vendeur_nom et description
 pour répondre à :
 "{question}"
 
-— Si un vendeur est mentionné, ajoute un filtre flou :
+— Si un nom de vendeur est mentionné, ajoute un filtre flou :
   WHERE levenshtein(lower(vendeur_nom), lower(:vendeur_nom)) <= 2
 — Sinon, n'ajoute pas de filtre sur le vendeur.
 """
