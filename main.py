@@ -464,6 +464,8 @@ montant_ttc, conditions_paiement, mentions_legales, image_path, created_at
     current_day = now.day
     current_hour = now.hour
 
+    question = req.question
+
     # Si la question ne contient pas de date explicite, ajoute le contexte temporel
     if not any(keyword in question.lower() for keyword in ["année", "mois", "semaine", "jour", "heure", "date"]):
         question = f"""
