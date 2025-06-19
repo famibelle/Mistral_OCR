@@ -599,6 +599,11 @@ def check_and_update_database(data: dict) -> list:
     Retourne la liste des champs mis à jour ou ajoutés.
     """
     updated_fields = []
+    # Patch heure
+    heure_val = data.get('heure')
+    if isinstance(heure_val, str) and len(heure_val) == 5:
+        heure_val = heure_val + ':00'
+    data['heure'] = heure_val
     with engine.begin() as conn:
         # Création de la table si besoin (PostgreSQL)
         conn.execute(text('''
