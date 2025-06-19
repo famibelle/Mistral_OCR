@@ -468,7 +468,7 @@ montant_ttc, conditions_paiement, mentions_legales, image_path, created_at
     if not any(keyword in question.lower() for keyword in ["année", "mois", "semaine", "jour", "heure", "date"]):
         question = f"""
 Aujourd'hui nous sommes le {current_day}, {current_month} {current_year} et il est {current_hour}. 
-Voici la question : {question}
+Voici la question : {req.question}
 """
        
     
